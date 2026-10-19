@@ -36,6 +36,13 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>SmartRemote requires access to your local network to discover and control LG Smart TVs.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_webos._tcp</string>
+		<string>_airplay._tcp</string>
+	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

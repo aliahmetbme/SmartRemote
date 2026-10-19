@@ -1,0 +1,108 @@
+import { DiscoveryManager } from '../application/services/DiscoveryManager';
+import {
+  Scheduler,
+  TVConnectionManager,
+} from '../application/services/TVConnectionManager';
+import { ConnectTVUseCase } from '../application/usecases/ConnectTVUseCase';
+import { DisconnectTVUseCase } from '../application/usecases/DisconnectTVUseCase';
+import { DiscoverTVsUseCase } from '../application/usecases/DiscoverTVsUseCase';
+import { PairTVUseCase } from '../application/usecases/PairTVUseCase';
+import { ProbeManualIPUseCase } from '../application/usecases/ProbeManualIPUseCase';
+import { ReconnectTVUseCase } from '../application/usecases/ReconnectTVUseCase';
+import { RestoreLastTVUseCase } from '../application/usecases/RestoreLastTVUseCase';
+import { SendRemoteCommandUseCase } from '../application/usecases/SendRemoteCommandUseCase';
+import { StartupRestorationUseCase } from '../application/usecases/StartupRestorationUseCase';
+import { ICredentialStorage } from '../domain/interfaces/ICredentialStorage';
+import { ITVAdapterFactory } from '../domain/interfaces/ITVAdapterFactory';
+import { ITVDeviceRepository } from '../domain/interfaces/ITVDeviceRepository';
+import { ITVDiscoveryService } from '../domain/interfaces/ITVDiscoveryService';
+import { LGWebOSSSDPDiscoveryStrategy } from '../infrastructure/discovery/discovery-strategies/LGWebOSSSDPDiscoveryStrategy';
+import { ManualIPDiscoveryStrategy } from '../infrastructure/discovery/discovery-strategies/ManualIPDiscoveryStrategy';
+import { NativeUdpSocketTransport } from '../infrastructure/discovery/transport/NativeUdpSocketTransport';
+import { TVDiscoveryService } from '../infrastructure/discovery/TVDiscoveryService';
+import { createDefaultAdapterFactory } from '../infrastructure/factories/TVAdapterFactory';
+import { LocalTVDeviceRepository } from '../infrastructure/repositories/LocalTVDeviceRepository';
+import { AsyncStorageKeyValueStorage } from '../infrastructure/storage/AsyncStorageKeyValueStorage';
+import { IKeyValueStorage } from '../infrastructure/storage/IKeyValueStorage';
+import { InMemoryKeyValueStorage } from '../infrastructure/storage/InMemoryKeyValueStorage';
+import { SecureCredentialStorage } from '../infrastructure/storage/SecureCredentialStorage';
+import { AppStore, createAppStore } from '../store';
+import { bindConnectionToStore } from './bindConnectionToStore';
+
+export interface ContainerOverrides {
+  keyValueStorage?: IKeyValueStorage;
+  adapterFactory?: ITVAdapterFactory;
+  scheduler?: Scheduler;
+  /** Secure credential storage. LG webOS is registered when this is provided. */
+  credentialStorage?: ICredentialStorage;
+  discoveryService?: ITVDiscoveryService;
+  manualStrategy?: ManualIPDiscoveryStrategy;
+}
+
+/**
+ * Composition root: wires domain, application, and infrastructure layers.
+ */
+export function createContainer(overrides: ContainerOverrides = {}) {
+  const store: AppStore = createAppStore();
+  const deviceRepository: ITVDeviceRepository = new LocalTVDeviceRepository(
+    overrides.keyValueStorage ?? new InMemoryKeyValueStorage(),
+  );
+  const adapterFactory =
+    overrides.adapterFactory ??
+    createDefaultAdapterFactory({
+      lgWebOS: overrides.credentialStorage
+        ? { credentialStorage: overrides.credentialStorage, scheduler: overrides.scheduler }
+        : undefined,
+    });
+  const connectionManager = new TVConnectionManager(adapterFactory, {
+    scheduler: overrides.scheduler,
+  });
+  bindConnectionToStore(connectionManager, store.dispatch);
+
+  const manualStrategy = overrides.manualStrategy ?? new ManualIPDiscoveryStrategy();
+  const discoveryService: ITVDiscoveryService =
+    overrides.discoveryService ??
+    new TVDiscoveryService({
+      strategies: [new LGWebOSSSDPDiscoveryStrategy(new NativeUdpSocketTransport())],
+      manualStrategy,
+    });
+
+  const connectTV = new ConnectTVUseCase(connectionManager, deviceRepository);
+  const restoreLastTV = new RestoreLastTVUseCase(connectionManager, deviceRepository);
+  const discoverTVs = new DiscoverTVsUseCase(discoveryService);
+  const probeManualIP = new ProbeManualIPUseCase(manualStrategy);
+  const startupRestoration = new StartupRestorationUseCase(deviceRepository, restoreLastTV);
+  const discoveryManager = new DiscoveryManager(discoverTVs, store.dispatch);
+
+  return {
+    store,
+    adapterFactory,
+    deviceRepository,
+    connectionManager,
+    discoveryService,
+    discoveryManager,
+    useCases: {
+      connectTV,
+      pairTV: new PairTVUseCase(connectTV),
+      disconnectTV: new DisconnectTVUseCase(connectionManager),
+      reconnectTV: new ReconnectTVUseCase(connectionManager),
+      restoreLastTV,
+      sendRemoteCommand: new SendRemoteCommandUseCase(connectionManager),
+      discoverTVs,
+      probeManualIP,
+      startupRestoration,
+    },
+  };
+}
+
+/**
+ * Factory for production containers using native Keychain, AsyncStorage, and native networking.
+ */
+export function createProductionContainer() {
+  return createContainer({
+    credentialStorage: new SecureCredentialStorage(),
+    keyValueStorage: new AsyncStorageKeyValueStorage(),
+  });
+}
+
+export type AppContainer = ReturnType<typeof createContainer>;

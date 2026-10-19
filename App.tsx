@@ -1,45 +1,34 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import React, { useEffect, useMemo } from 'react';
+import { StatusBar } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Provider } from 'react-redux';
+import { AppContainer, createProductionContainer } from './src/di/container';
+import { ContainerProvider } from './src/presentation/context/ContainerContext';
+import { AppNavigator } from './src/presentation/navigation/AppNavigator';
 
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
-import {
-  SafeAreaProvider,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
-
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
-
-  return (
-    <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
-    </SafeAreaProvider>
-  );
+export interface AppProps {
+  container?: AppContainer;
 }
 
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
+function App({ container }: AppProps) {
+  const activeContainer = useMemo(() => container ?? createProductionContainer(), [container]);
+
+  useEffect(() => {
+    activeContainer.useCases.startupRestoration.execute().catch(() => {
+      // Non-fatal restoration error (e.g. no saved devices on first launch)
+    });
+  }, [activeContainer]);
 
   return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
-    </View>
+    <Provider store={activeContainer.store}>
+      <ContainerProvider container={activeContainer}>
+        <SafeAreaProvider>
+          <StatusBar barStyle="light-content" />
+          <AppNavigator />
+        </SafeAreaProvider>
+      </ContainerProvider>
+    </Provider>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
 
 export default App;

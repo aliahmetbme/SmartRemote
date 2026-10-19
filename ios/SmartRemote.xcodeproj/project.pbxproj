@@ -13,6 +13,9 @@
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		761780EF2CA45674006654EF /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EE2CA45674006654EF /* SceneDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		A1B2C3D42CA4567400665403 /* UdpSocketModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42CA4567400665401 /* UdpSocketModule.swift */; };
+		A1B2C3D42CA4567400665404 /* UdpSocketModuleBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42CA4567400665402 /* UdpSocketModuleBridge.m */; };
+		A1B2C3D42CA4567400665405 /* LGWebSocketSecurityPolicy.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42CA4567400665406 /* LGWebSocketSecurityPolicy.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +29,10 @@
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = SmartRemote/AppDelegate.swift; sourceTree = "<group>"; };
 		761780EE2CA45674006654EF /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SceneDelegate.swift; path = SmartRemote/SceneDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = SmartRemote/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		A1B2C3D42CA4567400665401 /* UdpSocketModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = UdpSocketModule.swift; path = SmartRemote/UdpSocketModule.swift; sourceTree = "<group>"; };
+		A1B2C3D42CA4567400665402 /* UdpSocketModuleBridge.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = UdpSocketModuleBridge.m; path = SmartRemote/UdpSocketModuleBridge.m; sourceTree = "<group>"; };
+		A1B2C3D42CA4567400665406 /* LGWebSocketSecurityPolicy.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = LGWebSocketSecurityPolicy.m; path = SmartRemote/LGWebSocketSecurityPolicy.m; sourceTree = "<group>"; };
+		A1B2C3D42CA4567400665407 /* LGWebSocketSecurityPolicy.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LGWebSocketSecurityPolicy.h; path = SmartRemote/LGWebSocketSecurityPolicy.h; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -50,6 +57,10 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
+				A1B2C3D42CA4567400665401 /* UdpSocketModule.swift */,
+				A1B2C3D42CA4567400665402 /* UdpSocketModuleBridge.m */,
+				A1B2C3D42CA4567400665407 /* LGWebSocketSecurityPolicy.h */,
+				A1B2C3D42CA4567400665406 /* LGWebSocketSecurityPolicy.m */,
 			);
 			name = SmartRemote;
 			sourceTree = "<group>";
@@ -134,7 +145,9 @@
 				LastUpgradeCheck = 1210;
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
+						DevelopmentTeam = RZG5C6GQ54;
 						LastSwiftMigration = 1120;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -194,9 +207,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-SmartRemote/Pods-SmartRemote-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-SmartRemote/Pods-SmartRemote-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -233,9 +250,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-SmartRemote/Pods-SmartRemote-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-SmartRemote/Pods-SmartRemote-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -251,6 +272,9 @@
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				761780EF2CA45674006654EF /* SceneDelegate.swift in Sources */,
+				A1B2C3D42CA4567400665403 /* UdpSocketModule.swift in Sources */,
+				A1B2C3D42CA4567400665404 /* UdpSocketModuleBridge.m in Sources */,
+				A1B2C3D42CA4567400665405 /* LGWebSocketSecurityPolicy.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -263,7 +287,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RZG5C6GQ54;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = SmartRemote/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -277,7 +303,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.aliahmeterdogdu.SmartRemote;
 				PRODUCT_NAME = SmartRemote;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -293,7 +319,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RZG5C6GQ54;
 				INFOPLIST_FILE = SmartRemote/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -306,7 +334,7 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.aliahmeterdogdu.SmartRemote;
 				PRODUCT_NAME = SmartRemote;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
