@@ -20,6 +20,7 @@ import { NavigationDirection } from '../../domain/enums/RemoteKey';
 import { TVCapability } from '../../domain/entities/TVCapabilities';
 import { useContainer } from '../context/ContainerContext';
 import { Touchpad } from '../components/Touchpad';
+import { NumericKeypad } from '../components/NumericKeypad';
 import { theme } from '../theme';
 
 interface RemoteScreenProps {
@@ -35,7 +36,8 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
   const savedDevices = useAppSelector(selectSavedDevices);
   const capabilities = useAppSelector(selectCapabilities);
 
-  const [activeTab, setActiveTab] = useState<'buttons' | 'touchpad'>('buttons');
+  const [activeTab, setActiveTab] = useState<'buttons' | 'touchpad' | 'numbers'>('buttons');
+  const [isTouchpadActive, setIsTouchpadActive] = useState<boolean>(false);
 
   const activeDevice = savedDevices.find(d => d.id === activeDeviceId);
   const tvDisplayName = activeDevice
@@ -326,10 +328,16 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
     </View>
   );
 
+  const handleTabChange = (tab: 'buttons' | 'touchpad' | 'numbers') => {
+    setIsTouchpadActive(false);
+    setActiveTab(tab);
+  };
+
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={[styles.contentContainer, { paddingTop: Math.max(insets.top, 16) }]}
+      scrollEnabled={!isTouchpadActive}
       testID="remote-screen"
     >
       {/* Top Bar: TV Name, Status, Switch TV Button */}
@@ -354,11 +362,11 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
         )}
       </View>
 
-      {/* Mode Switcher: Buttons vs Touchpad */}
+      {/* Mode Switcher: Buttons vs Touchpad vs Numbers */}
       <View style={styles.modeSwitcherRow}>
         <TouchableOpacity
           style={[styles.modeTab, activeTab === 'buttons' && styles.modeTabActive]}
-          onPress={() => setActiveTab('buttons')}
+          onPress={() => handleTabChange('buttons')}
           testID="tab-buttons"
           accessibilityRole="button"
           accessibilityLabel="Buttons Mode"
@@ -370,13 +378,25 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
 
         <TouchableOpacity
           style={[styles.modeTab, activeTab === 'touchpad' && styles.modeTabActive]}
-          onPress={() => setActiveTab('touchpad')}
+          onPress={() => handleTabChange('touchpad')}
           testID="tab-touchpad"
           accessibilityRole="button"
           accessibilityLabel="Touchpad Mode"
         >
           <Text style={[styles.modeTabText, activeTab === 'touchpad' && styles.modeTabTextActive]}>
             Touchpad
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.modeTab, activeTab === 'numbers' && styles.modeTabActive]}
+          onPress={() => handleTabChange('numbers')}
+          testID="tab-numbers"
+          accessibilityRole="button"
+          accessibilityLabel="Numbers Mode"
+        >
+          <Text style={[styles.modeTabText, activeTab === 'numbers' && styles.modeTabTextActive]}>
+            Numbers
           </Text>
         </TouchableOpacity>
       </View>
@@ -441,18 +461,34 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
         </View>
 
         {/* Dynamic Mode Content */}
-        {activeTab === 'buttons' ? (
+        {activeTab === 'buttons' && (
           /* Buttons Mode: Rockers + D-Pad Navigation */
           <View style={styles.middleControlRow}>
             {renderVolumeRocker()}
             {renderDPad()}
             {renderChannelRocker()}
           </View>
-        ) : (
+        )}
+
+        {activeTab === 'touchpad' && (
           /* Touchpad Mode: Generous gesture surface with Rockers accessible underneath */
           <View style={styles.touchpadSection}>
-            <Touchpad style={styles.touchpadExpandedSurface} />
+            <Touchpad
+              style={styles.touchpadExpandedSurface}
+              onActiveChange={setIsTouchpadActive}
+            />
             <View style={styles.touchpadRockersRow}>
+              {renderVolumeRocker()}
+              {renderChannelRocker()}
+            </View>
+          </View>
+        )}
+
+        {activeTab === 'numbers' && (
+          /* Numbers Mode: 4x3 Numeric Keypad with Rockers accessible underneath */
+          <View style={styles.numbersSection}>
+            <NumericKeypad style={styles.numbersKeypadSurface} />
+            <View style={styles.numbersRockersRow}>
               {renderVolumeRocker()}
               {renderChannelRocker()}
             </View>
@@ -777,6 +813,18 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
   touchpadRockersRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing.xl,
+  },
+  numbersSection: {
+    marginBottom: theme.spacing.lg,
+  },
+  numbersKeypadSurface: {
+    marginBottom: theme.spacing.md,
+  },
+  numbersRockersRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',

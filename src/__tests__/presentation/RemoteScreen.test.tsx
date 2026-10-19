@@ -3,6 +3,7 @@ import ReactTestRenderer from 'react-test-renderer';
 import { Provider } from 'react-redux';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RemoteScreen } from '../../presentation/screens/RemoteScreen';
+import { Touchpad } from '../../presentation/components/Touchpad';
 import { ContainerProvider } from '../../presentation/context/ContainerContext';
 import { createContainer } from '../../di/container';
 import { connectionActions } from '../../store/slices/connectionSlice';
@@ -307,7 +308,7 @@ describe('RemoteScreen Component', () => {
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'powerOff' });
   });
 
-  it('switches between buttons and touchpad modes', async () => {
+  it('switches between buttons, touchpad, and numbers modes', async () => {
     const { container, render } = createTestEnv();
 
     container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
@@ -317,8 +318,10 @@ describe('RemoteScreen Component', () => {
       renderer = render();
     });
 
-    // Initially in Buttons mode, no touchpad surface
+    // Initially in Buttons mode: D-Pad is mounted, Touchpad and Keypad are not
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBeGreaterThan(0);
     expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBe(0);
+    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBe(0);
 
     // Switch to Touchpad mode
     const touchpadModeBtn = renderer!.root.findByProps({ testID: 'tab-touchpad' });
@@ -326,8 +329,67 @@ describe('RemoteScreen Component', () => {
       touchpadModeBtn.props.onPress();
     });
 
-    // Touchpad surface is now mounted
+    // Touchpad surface is now mounted; D-Pad and Keypad are unmounted
     expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
+    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBe(0);
+
+    // Switch to Numbers mode
+    const numbersModeBtn = renderer!.root.findByProps({ testID: 'tab-numbers' });
+    await ReactTestRenderer.act(() => {
+      numbersModeBtn.props.onPress();
+    });
+
+    // NumericKeypad is now mounted; D-Pad and Touchpad are unmounted
+    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
+    expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBe(0);
+
+    // Switch back to Buttons mode
+    const buttonsModeBtn = renderer!.root.findByProps({ testID: 'tab-buttons' });
+    await ReactTestRenderer.act(() => {
+      buttonsModeBtn.props.onPress();
+    });
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBe(0);
+  });
+
+  it('disables ScrollView scrolling while Touchpad gesture is active and restores it upon release', async () => {
+    const { container, render } = createTestEnv({ pointerControl: true });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    container.store.dispatch(
+      tvActions.capabilitiesChanged(createCapabilities({ pointerControl: true })),
+    );
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = render();
+    });
+
+    // Switch to Touchpad mode
+    await ReactTestRenderer.act(() => {
+      renderer.root.findByProps({ testID: 'tab-touchpad' }).props.onPress();
+    });
+
+    const scrollView = renderer!.root.findByProps({ testID: 'remote-screen' });
+    // Initially scrollEnabled is true
+    expect(scrollView.props.scrollEnabled).toBe(true);
+
+    const touchpad = renderer!.root.findByType(Touchpad);
+    expect(touchpad).toBeDefined();
+
+    // Touchpad signals gesture active -> parent scrolling must be disabled
+    await ReactTestRenderer.act(() => {
+      touchpad.props.onActiveChange(true);
+    });
+    expect(scrollView.props.scrollEnabled).toBe(false);
+
+    // Touchpad signals gesture release -> parent scrolling must be re-enabled
+    await ReactTestRenderer.act(() => {
+      touchpad.props.onActiveChange(false);
+    });
+    expect(scrollView.props.scrollEnabled).toBe(true);
   });
 
   it('navigates to TV discovery screen when switch TV button is pressed', async () => {
@@ -430,6 +492,65 @@ describe('RemoteScreen Component', () => {
       chUpBtn.props.onPress();
     });
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'channelUp' });
+  });
+
+  it('keeps volume, channel, power, home, and back controls accessible in Numbers mode', async () => {
+    const { container, render } = createTestEnv({
+      volumeControl: true,
+      channelControl: true,
+      powerOff: true,
+    });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    container.store.dispatch(
+      tvActions.capabilitiesChanged(
+        createCapabilities({
+          volumeControl: true,
+          channelControl: true,
+          powerOff: true,
+        }),
+      ),
+    );
+
+    const sendCommandSpy = jest
+      .spyOn(container.useCases.sendRemoteCommand, 'execute')
+      .mockResolvedValue();
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = render();
+    });
+
+    // Switch to Numbers mode
+    const numbersModeBtn = renderer!.root.findByProps({ testID: 'tab-numbers' });
+    await ReactTestRenderer.act(() => {
+      numbersModeBtn.props.onPress();
+    });
+
+    // NumericKeypad is mounted
+    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBeGreaterThan(0);
+
+    // Directional D-pad should NOT be mounted in Numbers mode
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
+
+    // Common controls (Power, Home, Back, Vol+, Vol-, Ch+, Ch-) MUST still be mounted and functional
+    const powerBtn = renderer!.root.findByProps({ testID: 'btn-power' });
+    await ReactTestRenderer.act(() => {
+      powerBtn.props.onPress();
+    });
+    expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'powerOff' });
+
+    const volDownBtn = renderer!.root.findByProps({ testID: 'btn-vol-down' });
+    await ReactTestRenderer.act(() => {
+      volDownBtn.props.onPress();
+    });
+    expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'volumeDown' });
+
+    const chDownBtn = renderer!.root.findByProps({ testID: 'btn-ch-down' });
+    await ReactTestRenderer.act(() => {
+      chDownBtn.props.onPress();
+    });
+    expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'channelDown' });
   });
 
   it('applies dynamic safe area top padding to respect the status bar and Dynamic Island', async () => {

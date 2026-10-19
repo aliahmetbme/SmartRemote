@@ -31,6 +31,30 @@ describe('LGWebOSCommandMapper', () => {
     expect(M.key(RemoteKey.Mute)).toBeNull();
   });
 
+  it('maps digits 0-9 to pointer buttons in LG webOS network-input protocol', () => {
+    const digitKeys = [
+      RemoteKey.Digit0,
+      RemoteKey.Digit1,
+      RemoteKey.Digit2,
+      RemoteKey.Digit3,
+      RemoteKey.Digit4,
+      RemoteKey.Digit5,
+      RemoteKey.Digit6,
+      RemoteKey.Digit7,
+      RemoteKey.Digit8,
+      RemoteKey.Digit9,
+    ];
+
+    digitKeys.forEach((key, index) => {
+      expect(M.key(key)).toEqual({ kind: 'pointer-button', name: String(index) });
+      expect(M.digit(index)).toEqual({ kind: 'pointer-button', name: String(index) });
+    });
+
+    expect(() => M.digit(-1)).toThrow(RangeError);
+    expect(() => M.digit(10)).toThrow(RangeError);
+    expect(() => M.digit(1.5)).toThrow(RangeError);
+  });
+
   it('validates arguments', () => {
     expect(() => M.setVolume(101)).toThrow(RangeError);
     expect(() => M.setVolume(1.5)).toThrow(RangeError);

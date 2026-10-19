@@ -556,6 +556,16 @@ function keyCapability(key: RemoteKey): TVCapability {
       return 'muteControl';
     case RemoteKey.ChannelUp:
     case RemoteKey.ChannelDown:
+    case RemoteKey.Digit0:
+    case RemoteKey.Digit1:
+    case RemoteKey.Digit2:
+    case RemoteKey.Digit3:
+    case RemoteKey.Digit4:
+    case RemoteKey.Digit5:
+    case RemoteKey.Digit6:
+    case RemoteKey.Digit7:
+    case RemoteKey.Digit8:
+    case RemoteKey.Digit9:
       return 'channelControl';
     case RemoteKey.Power:
       return 'powerOff';

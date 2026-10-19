@@ -1,7 +1,24 @@
 import { createCapabilities, TVCapabilities } from '../../../domain/entities/TVCapabilities';
 import { NavigationDirection, RemoteKey } from '../../../domain/enums/RemoteKey';
 
-export type PointerButton = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'ENTER' | 'BACK' | 'HOME';
+export type PointerButton =
+  | 'UP'
+  | 'DOWN'
+  | 'LEFT'
+  | 'RIGHT'
+  | 'ENTER'
+  | 'BACK'
+  | 'HOME'
+  | '0'
+  | '1'
+  | '2'
+  | '3'
+  | '4'
+  | '5'
+  | '6'
+  | '7'
+  | '8'
+  | '9';
 
 export type LGWebOSCommand =
   | { kind: 'ssap'; uri: string; payload?: Record<string, unknown> }
@@ -72,6 +89,12 @@ export const LGWebOSCommandMapper = {
   sendText(text: string): LGWebOSCommand {
     return ssap(SSAP_URI.insertText, { text, replace: 0 });
   },
+  digit(value: number): LGWebOSCommand {
+    if (!Number.isInteger(value) || value < 0 || value > 9) {
+      throw new RangeError('Digit must be an integer between 0 and 9');
+    }
+    return button(String(value) as PointerButton);
+  },
 
   /** Generic key → command. Returns null for keys that need adapter-level handling (Mute is a toggle). */
   key(key: RemoteKey): LGWebOSCommand | null {
@@ -100,6 +123,26 @@ export const LGWebOSCommandMapper = {
         return ssap(SSAP_URI.channelDown);
       case RemoteKey.Power:
         return ssap(SSAP_URI.powerOff);
+      case RemoteKey.Digit0:
+        return button('0');
+      case RemoteKey.Digit1:
+        return button('1');
+      case RemoteKey.Digit2:
+        return button('2');
+      case RemoteKey.Digit3:
+        return button('3');
+      case RemoteKey.Digit4:
+        return button('4');
+      case RemoteKey.Digit5:
+        return button('5');
+      case RemoteKey.Digit6:
+        return button('6');
+      case RemoteKey.Digit7:
+        return button('7');
+      case RemoteKey.Digit8:
+        return button('8');
+      case RemoteKey.Digit9:
+        return button('9');
       case RemoteKey.Mute:
         return null;
     }

@@ -12,6 +12,16 @@ export enum RemoteKey {
   ChannelUp = 'channel-up',
   ChannelDown = 'channel-down',
   Power = 'power',
+  Digit0 = 'digit-0',
+  Digit1 = 'digit-1',
+  Digit2 = 'digit-2',
+  Digit3 = 'digit-3',
+  Digit4 = 'digit-4',
+  Digit5 = 'digit-5',
+  Digit6 = 'digit-6',
+  Digit7 = 'digit-7',
+  Digit8 = 'digit-8',
+  Digit9 = 'digit-9',
 }
 
 export enum NavigationDirection {

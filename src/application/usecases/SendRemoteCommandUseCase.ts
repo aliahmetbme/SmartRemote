@@ -13,6 +13,7 @@ import { TVConnectionManager } from '../services/TVConnectionManager';
 
 export type RemoteCommand =
   | { type: 'key'; key: RemoteKey }
+  | { type: 'digit'; digit: number }
   | { type: 'volumeUp' }
   | { type: 'volumeDown' }
   | { type: 'mute' }
@@ -30,6 +31,19 @@ export type RemoteCommand =
   | { type: 'movePointer'; deltaX: number; deltaY: number }
   | { type: 'sendText'; text: string };
 
+const DIGIT_KEYS: readonly RemoteKey[] = [
+  RemoteKey.Digit0,
+  RemoteKey.Digit1,
+  RemoteKey.Digit2,
+  RemoteKey.Digit3,
+  RemoteKey.Digit4,
+  RemoteKey.Digit5,
+  RemoteKey.Digit6,
+  RemoteKey.Digit7,
+  RemoteKey.Digit8,
+  RemoteKey.Digit9,
+];
+
 const KEY_CAPABILITY: Record<RemoteKey, TVCapability> = {
   [RemoteKey.Up]: 'navigation',
   [RemoteKey.Down]: 'navigation',
@@ -44,12 +58,24 @@ const KEY_CAPABILITY: Record<RemoteKey, TVCapability> = {
   [RemoteKey.ChannelUp]: 'channelControl',
   [RemoteKey.ChannelDown]: 'channelControl',
   [RemoteKey.Power]: 'powerOff',
+  [RemoteKey.Digit0]: 'channelControl',
+  [RemoteKey.Digit1]: 'channelControl',
+  [RemoteKey.Digit2]: 'channelControl',
+  [RemoteKey.Digit3]: 'channelControl',
+  [RemoteKey.Digit4]: 'channelControl',
+  [RemoteKey.Digit5]: 'channelControl',
+  [RemoteKey.Digit6]: 'channelControl',
+  [RemoteKey.Digit7]: 'channelControl',
+  [RemoteKey.Digit8]: 'channelControl',
+  [RemoteKey.Digit9]: 'channelControl',
 };
 
 function requiredCapability(command: RemoteCommand): TVCapability {
   switch (command.type) {
     case 'key':
       return KEY_CAPABILITY[command.key];
+    case 'digit':
+      return 'channelControl';
     case 'volumeUp':
     case 'volumeDown':
     case 'setVolume':
@@ -96,6 +122,12 @@ export class SendRemoteCommandUseCase {
     switch (command.type) {
       case 'key':
         return adapter.sendKey(command.key);
+      case 'digit': {
+        if (!Number.isInteger(command.digit) || command.digit < 0 || command.digit > 9) {
+          throw new RangeError('Digit must be an integer between 0 and 9');
+        }
+        return adapter.sendKey(DIGIT_KEYS[command.digit]);
+      }
       case 'volumeUp':
         return adapter.volumeUp();
       case 'volumeDown':

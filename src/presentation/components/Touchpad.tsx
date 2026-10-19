@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useState } from 'react';
+import React, { useRef, useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -18,9 +18,10 @@ import { theme } from '../theme';
 export interface TouchpadProps {
   throttleMs?: number;
   style?: StyleProp<ViewStyle>;
+  onActiveChange?: (active: boolean) => void;
 }
 
-export const Touchpad: React.FC<TouchpadProps> = ({ throttleMs = 25, style }) => {
+export const Touchpad: React.FC<TouchpadProps> = ({ throttleMs = 25, style, onActiveChange }) => {
   const container = useContainer();
   const capabilities = useAppSelector(selectCapabilities);
   const connectionStatus = useAppSelector(selectConnectionStatus);
@@ -36,13 +37,25 @@ export const Touchpad: React.FC<TouchpadProps> = ({ throttleMs = 25, style }) =>
   const touchStartTimeRef = useRef<number>(0);
   const hasMovedRef = useRef<boolean>(false);
 
+  // Clean up active state on unmount so parent scroll is never permanently locked
+  useEffect(() => {
+    return () => {
+      onActiveChange?.(false);
+    };
+  }, [onActiveChange]);
+
   const panResponder = useMemo(() => {
     return PanResponder.create({
       onStartShouldSetPanResponder: () => isConnected && isAvailable,
       onMoveShouldSetPanResponder: () => isConnected && isAvailable,
+      onStartShouldSetPanResponderCapture: () => isConnected && isAvailable,
+      onMoveShouldSetPanResponderCapture: () => isConnected && isAvailable,
+      // Refuse to yield responder status once active so parent ScrollView cannot steal drags
+      onPanResponderTerminationRequest: () => false,
 
       onPanResponderGrant: (evt: GestureResponderEvent) => {
         setIsPressing(true);
+        onActiveChange?.(true);
         touchStartTimeRef.current = Date.now();
         hasMovedRef.current = false;
         lastMoveTimeRef.current = Date.now();
@@ -85,6 +98,7 @@ export const Touchpad: React.FC<TouchpadProps> = ({ throttleMs = 25, style }) =>
 
       onPanResponderRelease: () => {
         setIsPressing(false);
+        onActiveChange?.(false);
         const duration = Date.now() - touchStartTimeRef.current;
 
         // Tap-to-click gesture: short touch without significant drag
@@ -97,9 +111,10 @@ export const Touchpad: React.FC<TouchpadProps> = ({ throttleMs = 25, style }) =>
 
       onPanResponderTerminate: () => {
         setIsPressing(false);
+        onActiveChange?.(false);
       },
     });
-  }, [container, isConnected, isAvailable, throttleMs]);
+  }, [container, isConnected, isAvailable, throttleMs, onActiveChange]);
 
   if (!isAvailable) {
     return (

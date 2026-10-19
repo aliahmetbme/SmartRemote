@@ -65,4 +65,32 @@ describe('SendRemoteCommandUseCase', () => {
       TVUnsupportedOperationError,
     );
   });
+
+  it('forwards digit commands to adapter and validates digit range', async () => {
+    const { adapter, useCase, connect } = await setup({ capabilities: { channelControl: true } });
+    await connect();
+
+    await useCase.execute({ type: 'digit', digit: 7 });
+    await useCase.execute({ type: 'digit', digit: 0 });
+    expect(adapter.commands).toEqual([
+      { command: 'sendKey', args: [RemoteKey.Digit7] },
+      { command: 'sendKey', args: [RemoteKey.Digit0] },
+    ]);
+
+    await expect(useCase.execute({ type: 'digit', digit: -1 })).rejects.toThrow(RangeError);
+    await expect(useCase.execute({ type: 'digit', digit: 10 })).rejects.toThrow(RangeError);
+    await expect(useCase.execute({ type: 'digit', digit: 2.5 })).rejects.toThrow(RangeError);
+  });
+
+  it('refuses digit commands when channelControl capability is unsupported', async () => {
+    const { adapter, useCase, connect } = await setup({ capabilities: { channelControl: false } });
+    await connect();
+    await expect(useCase.execute({ type: 'digit', digit: 1 })).rejects.toBeInstanceOf(
+      TVUnsupportedOperationError,
+    );
+    await expect(useCase.execute({ type: 'key', key: RemoteKey.Digit1 })).rejects.toBeInstanceOf(
+      TVUnsupportedOperationError,
+    );
+    expect(adapter.commands).toEqual([]);
+  });
 });

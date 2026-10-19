@@ -34,6 +34,29 @@ describe('Touchpad Component', () => {
     return { container, mockAdapter, render };
   };
 
+  const createTouchEvent = (pageX: number, pageY: number) => ({
+    nativeEvent: { pageX, pageY, identifier: 0, touches: [] },
+    touchHistory: {
+      mostRecentTimeStamp: Date.now(),
+      touchBank: [
+        {
+          touchActive: true,
+          startPageX: pageX,
+          startPageY: pageY,
+          startTimeStamp: Date.now(),
+          currentPageX: pageX,
+          currentPageY: pageY,
+          currentTimeStamp: Date.now(),
+          previousPageX: pageX,
+          previousPageY: pageY,
+          previousTimeStamp: Date.now(),
+        },
+      ],
+      numberActiveTouches: 1,
+      indexOfSingleActiveTouch: 0,
+    },
+  });
+
   it('renders unsupported notice when TV reports pointerControl as unsupported', async () => {
     const { container, render } = createTestEnv({ pointerControl: false });
 
@@ -104,29 +127,6 @@ describe('Touchpad Component', () => {
 
     const initialStoreState = container.store.getState();
 
-    const createTouchEvent = (pageX: number, pageY: number) => ({
-      nativeEvent: { pageX, pageY, identifier: 0, touches: [] },
-      touchHistory: {
-        mostRecentTimeStamp: Date.now(),
-        touchBank: [
-          {
-            touchActive: true,
-            startPageX: pageX,
-            startPageY: pageY,
-            startTimeStamp: Date.now(),
-            currentPageX: pageX,
-            currentPageY: pageY,
-            currentTimeStamp: Date.now(),
-            previousPageX: pageX,
-            previousPageY: pageY,
-            previousTimeStamp: Date.now(),
-          },
-        ],
-        numberActiveTouches: 1,
-        indexOfSingleActiveTouch: 0,
-      },
-    });
-
     // 1. Touch Grant
     await ReactTestRenderer.act(() => {
       handlers.onResponderGrant(createTouchEvent(100, 100));
@@ -168,29 +168,6 @@ describe('Touchpad Component', () => {
     const surface = renderer!.root.findByProps({ testID: 'touchpad-surface' });
     const handlers = surface.props;
 
-    const createTouchEvent = (pageX: number, pageY: number) => ({
-      nativeEvent: { pageX, pageY, identifier: 0, touches: [] },
-      touchHistory: {
-        mostRecentTimeStamp: Date.now(),
-        touchBank: [
-          {
-            touchActive: true,
-            startPageX: pageX,
-            startPageY: pageY,
-            startTimeStamp: Date.now(),
-            currentPageX: pageX,
-            currentPageY: pageY,
-            currentTimeStamp: Date.now(),
-            previousPageX: pageX,
-            previousPageY: pageY,
-            previousTimeStamp: Date.now(),
-          },
-        ],
-        numberActiveTouches: 1,
-        indexOfSingleActiveTouch: 0,
-      },
-    });
-
     // Grant then quick release
     await ReactTestRenderer.act(() => {
       handlers.onResponderGrant(createTouchEvent(50, 50));
@@ -201,5 +178,170 @@ describe('Touchpad Component', () => {
     });
 
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'select' });
+  });
+
+  it('notifies onActiveChange on grant, release, and termination to isolate gestures', async () => {
+    const { container } = createTestEnv({ pointerControl: true });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    container.store.dispatch(
+      tvActions.capabilitiesChanged(createCapabilities({ pointerControl: true })),
+    );
+
+    const onActiveChange = jest.fn();
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <Provider store={container.store}>
+          <ContainerProvider container={container}>
+            <Touchpad throttleMs={0} onActiveChange={onActiveChange} />
+          </ContainerProvider>
+        </Provider>,
+      );
+    });
+
+    const surface = renderer!.root.findByProps({ testID: 'touchpad-surface' });
+    const handlers = surface.props;
+
+    // 1. Grant invokes onActiveChange(true)
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderGrant(createTouchEvent(50, 50));
+    });
+    expect(onActiveChange).toHaveBeenCalledWith(true);
+
+    // 2. Release invokes onActiveChange(false)
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderRelease(createTouchEvent(50, 50));
+    });
+    expect(onActiveChange).toHaveBeenCalledWith(false);
+
+    // 3. Grant then Terminate (cancellation) invokes onActiveChange(false)
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderGrant(createTouchEvent(50, 50));
+    });
+    expect(onActiveChange).toHaveBeenLastCalledWith(true);
+
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderTerminate(createTouchEvent(50, 50));
+    });
+    expect(onActiveChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('captures gestures and refuses responder termination request so drags remain owned by touchpad', async () => {
+    const { container } = createTestEnv({ pointerControl: true });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    container.store.dispatch(
+      tvActions.capabilitiesChanged(createCapabilities({ pointerControl: true })),
+    );
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <Provider store={container.store}>
+          <ContainerProvider container={container}>
+            <Touchpad throttleMs={0} />
+          </ContainerProvider>
+        </Provider>,
+      );
+    });
+
+    const surface = renderer!.root.findByProps({ testID: 'touchpad-surface' });
+    const handlers = surface.props;
+
+    // Must capture responder at start and move phases when connected & available
+    expect(handlers.onStartShouldSetResponderCapture(createTouchEvent(50, 50))).toBe(true);
+    expect(handlers.onMoveShouldSetResponderCapture(createTouchEvent(50, 50))).toBe(true);
+
+    // Must explicitly refuse responder termination request to prevent ScrollView hijacking
+    expect(handlers.onResponderTerminationRequest(createTouchEvent(50, 50))).toBe(false);
+  });
+
+  it('maintains ownership and sends pointer deltas during vertical and diagonal drags', async () => {
+    const { container } = createTestEnv({ pointerControl: true });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    container.store.dispatch(
+      tvActions.capabilitiesChanged(createCapabilities({ pointerControl: true })),
+    );
+
+    const sendCommandSpy = jest
+      .spyOn(container.useCases.sendRemoteCommand, 'execute')
+      .mockResolvedValue();
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <Provider store={container.store}>
+          <ContainerProvider container={container}>
+            <Touchpad throttleMs={0} />
+          </ContainerProvider>
+        </Provider>,
+      );
+    });
+
+    const surface = renderer!.root.findByProps({ testID: 'touchpad-surface' });
+    const handlers = surface.props;
+
+    // Grant
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderGrant(createTouchEvent(100, 100));
+    });
+
+    // Vertical drag down (+40 Y)
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderMove(createTouchEvent(100, 140));
+    });
+    expect(sendCommandSpy).toHaveBeenCalledWith({
+      type: 'movePointer',
+      deltaX: 0,
+      deltaY: 40,
+    });
+
+    // Advance time slightly to simulate real frame gap
+    await new Promise(r => setTimeout(() => r(undefined), 5));
+
+    // Diagonal drag up-left (-25 X, -30 Y)
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderMove(createTouchEvent(75, 110));
+    });
+    expect(sendCommandSpy).toHaveBeenCalledWith({
+      type: 'movePointer',
+      deltaX: -25,
+      deltaY: -30,
+    });
+
+    // Release after drag should NOT trigger select
+    sendCommandSpy.mockClear();
+    await ReactTestRenderer.act(() => {
+      handlers.onResponderRelease(createTouchEvent(75, 110));
+    });
+    expect(sendCommandSpy).not.toHaveBeenCalledWith({ type: 'select' });
+  });
+
+  it('cleans up active state when unmounted to prevent parent scroll deadlock', async () => {
+    const { container } = createTestEnv({ pointerControl: true });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+
+    const onActiveChange = jest.fn();
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <Provider store={container.store}>
+          <ContainerProvider container={container}>
+            <Touchpad onActiveChange={onActiveChange} />
+          </ContainerProvider>
+        </Provider>,
+      );
+    });
+
+    await ReactTestRenderer.act(() => {
+      renderer.unmount();
+    });
+
+    expect(onActiveChange).toHaveBeenCalledWith(false);
   });
 });
