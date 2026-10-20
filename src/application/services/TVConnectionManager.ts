@@ -325,6 +325,7 @@ export class TVConnectionManager {
     if (generation !== this.generation) {
       return;
     }
+    this.clearRetryTimer();
     if (this.retryCount >= this.policy.maxAttempts) {
       this.error = new TVConnectionError('Could not reconnect to the TV');
       this.setState(TVConnectionState.Error);

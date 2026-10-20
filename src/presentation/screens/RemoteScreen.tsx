@@ -21,6 +21,7 @@ import { TVCapability } from '../../domain/entities/TVCapabilities';
 import { useContainer } from '../context/ContainerContext';
 import { Touchpad } from '../components/Touchpad';
 import { NumericKeypad } from '../components/NumericKeypad';
+import { MotionSurface } from '../components/MotionSurface';
 import { theme } from '../theme';
 
 interface RemoteScreenProps {
@@ -36,12 +37,18 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
   const savedDevices = useAppSelector(selectSavedDevices);
   const capabilities = useAppSelector(selectCapabilities);
 
-  const [activeTab, setActiveTab] = useState<'buttons' | 'touchpad' | 'numbers'>('buttons');
+  const [activeTab, setActiveTab] = useState<'buttons' | 'touchpad' | 'numbers' | 'motion'>('buttons');
   const [isTouchpadActive, setIsTouchpadActive] = useState<boolean>(false);
+  const [isMotionActive, setIsMotionActive] = useState<boolean>(false);
 
-  const activeDevice = savedDevices.find(d => d.id === activeDeviceId);
+  const managerDevice = container.connectionManager.getDevice();
+  const activeDevice =
+    savedDevices.find(d => d.id === activeDeviceId) ??
+    (managerDevice ? managerDevice : null);
   const tvDisplayName = activeDevice
     ? activeDevice.name
+    : managerDevice
+    ? managerDevice.name
     : activeDeviceId
     ? `LG TV (${activeDeviceId})`
     : 'No TV Selected';
@@ -328,8 +335,9 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
     </View>
   );
 
-  const handleTabChange = (tab: 'buttons' | 'touchpad' | 'numbers') => {
+  const handleTabChange = (tab: 'buttons' | 'touchpad' | 'numbers' | 'motion') => {
     setIsTouchpadActive(false);
+    setIsMotionActive(false);
     setActiveTab(tab);
   };
 
@@ -337,7 +345,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
     <ScrollView
       style={styles.container}
       contentContainerStyle={[styles.contentContainer, { paddingTop: Math.max(insets.top, 16) }]}
-      scrollEnabled={!isTouchpadActive}
+      scrollEnabled={!isTouchpadActive && !isMotionActive}
       testID="remote-screen"
     >
       {/* Top Bar: TV Name, Status, Switch TV Button */}
@@ -395,8 +403,26 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
           accessibilityRole="button"
           accessibilityLabel="Numbers Mode"
         >
-          <Text style={[styles.modeTabText, activeTab === 'numbers' && styles.modeTabTextActive]}>
+          <Text
+            style={[styles.modeTabText, activeTab === 'numbers' && styles.modeTabTextActive]}
+            numberOfLines={1}
+          >
             Numbers
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.modeTab, activeTab === 'motion' && styles.modeTabActive]}
+          onPress={() => handleTabChange('motion')}
+          testID="tab-motion"
+          accessibilityRole="button"
+          accessibilityLabel="Motion Mode"
+        >
+          <Text
+            style={[styles.modeTabText, activeTab === 'motion' && styles.modeTabTextActive]}
+            numberOfLines={1}
+          >
+            Motion
           </Text>
         </TouchableOpacity>
       </View>
@@ -489,6 +515,20 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
           <View style={styles.numbersSection}>
             <NumericKeypad style={styles.numbersKeypadSurface} />
             <View style={styles.numbersRockersRow}>
+              {renderVolumeRocker()}
+              {renderChannelRocker()}
+            </View>
+          </View>
+        )}
+
+        {activeTab === 'motion' && (
+          /* Motion Mode: Hold-to-aim surface with Rockers accessible underneath */
+          <View style={styles.motionSection}>
+            <MotionSurface
+              style={styles.motionExpandedSurface}
+              onActiveChange={setIsMotionActive}
+            />
+            <View style={styles.motionRockersRow}>
               {renderVolumeRocker()}
               {renderChannelRocker()}
             </View>
@@ -634,7 +674,8 @@ const styles = StyleSheet.create({
   },
   modeTab: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.borderRadius.full,
@@ -645,7 +686,7 @@ const styles = StyleSheet.create({
     borderColor: '#3E4D6E',
   },
   modeTabText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#7E879B',
   },
@@ -825,6 +866,18 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
   numbersRockersRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing.xl,
+  },
+  motionSection: {
+    marginBottom: theme.spacing.lg,
+  },
+  motionExpandedSurface: {
+    marginBottom: theme.spacing.md,
+  },
+  motionRockersRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',

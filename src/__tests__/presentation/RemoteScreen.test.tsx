@@ -4,6 +4,7 @@ import { Provider } from 'react-redux';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RemoteScreen } from '../../presentation/screens/RemoteScreen';
 import { Touchpad } from '../../presentation/components/Touchpad';
+import { MotionSurface } from '../../presentation/components/MotionSurface';
 import { ContainerProvider } from '../../presentation/context/ContainerContext';
 import { createContainer } from '../../di/container';
 import { connectionActions } from '../../store/slices/connectionSlice';
@@ -392,6 +393,43 @@ describe('RemoteScreen Component', () => {
     expect(scrollView.props.scrollEnabled).toBe(true);
   });
 
+  it('disables parent ScrollView scrolling while Motion hold-to-move is active and restores on release', async () => {
+    const { container, render } = createTestEnv({ pointerControl: 'supported' });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    container.store.dispatch(
+      tvActions.capabilitiesChanged(createCapabilities({ pointerControl: 'supported' })),
+    );
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = render();
+    });
+
+    // Switch to Motion mode
+    await ReactTestRenderer.act(() => {
+      renderer.root.findByProps({ testID: 'tab-motion' }).props.onPress();
+    });
+
+    const scrollView = renderer!.root.findByProps({ testID: 'remote-screen' });
+    expect(scrollView.props.scrollEnabled).toBe(true);
+
+    const motionSurface = renderer!.root.findByType(MotionSurface);
+    expect(motionSurface).toBeDefined();
+
+    // Motion hold starts -> parent scrolling must be disabled
+    await ReactTestRenderer.act(() => {
+      motionSurface.props.onActiveChange(true);
+    });
+    expect(scrollView.props.scrollEnabled).toBe(false);
+
+    // Motion hold released -> parent scrolling must be re-enabled
+    await ReactTestRenderer.act(() => {
+      motionSurface.props.onActiveChange(false);
+    });
+    expect(scrollView.props.scrollEnabled).toBe(true);
+  });
+
   it('navigates to TV discovery screen when switch TV button is pressed', async () => {
     const { onNavigateToDiscovery, render } = createTestEnv();
 
@@ -551,6 +589,70 @@ describe('RemoteScreen Component', () => {
       chDownBtn.props.onPress();
     });
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'channelDown' });
+  });
+
+  it('switches to Motion mode, renders MotionSurface, keeps common controls active, and cleans up on mode switch', async () => {
+    const { container, render } = createTestEnv({
+      volumeControl: true,
+      channelControl: true,
+      pointerControl: 'supported',
+      powerOff: true,
+    });
+
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    container.store.dispatch(
+      tvActions.capabilitiesChanged(
+        createCapabilities({
+          volumeControl: true,
+          channelControl: true,
+          pointerControl: 'supported',
+          powerOff: true,
+        }),
+      ),
+    );
+
+    const sendCommandSpy = jest
+      .spyOn(container.useCases.sendRemoteCommand, 'execute')
+      .mockResolvedValue();
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(() => {
+      renderer = render();
+    });
+
+    // Verify all 4 tabs exist
+    expect(renderer!.root.findByProps({ testID: 'tab-buttons' })).toBeDefined();
+    expect(renderer!.root.findByProps({ testID: 'tab-touchpad' })).toBeDefined();
+    expect(renderer!.root.findByProps({ testID: 'tab-numbers' })).toBeDefined();
+    expect(renderer!.root.findByProps({ testID: 'tab-motion' })).toBeDefined();
+
+    // Switch to Motion mode
+    const motionModeBtn = renderer!.root.findByProps({ testID: 'tab-motion' });
+    await ReactTestRenderer.act(() => {
+      motionModeBtn.props.onPress();
+    });
+
+    // MotionSurface is mounted
+    expect(renderer!.root.findAllByProps({ testID: 'motion-surface' }).length).toBeGreaterThan(0);
+
+    // Directional D-pad should NOT be mounted in Motion mode
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
+
+    // Common volume and channel rockers MUST still be mounted and functional
+    const volUpBtn = renderer!.root.findByProps({ testID: 'btn-vol-up' });
+    await ReactTestRenderer.act(() => {
+      volUpBtn.props.onPress();
+    });
+    expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'volumeUp' });
+
+    // Switch back to Buttons mode: MotionSurface should unmount and D-pad restore
+    const buttonsModeBtn = renderer!.root.findByProps({ testID: 'tab-buttons' });
+    await ReactTestRenderer.act(() => {
+      buttonsModeBtn.props.onPress();
+    });
+
+    expect(renderer!.root.findAllByProps({ testID: 'motion-surface' }).length).toBe(0);
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBeGreaterThan(0);
   });
 
   it('applies dynamic safe area top padding to respect the status bar and Dynamic Island', async () => {

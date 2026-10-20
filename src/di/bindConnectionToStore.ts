@@ -20,6 +20,10 @@ export function bindConnectionToStore(manager: TVConnectionManager, dispatch: Ap
     } else if (state === TVConnectionState.Connected) {
       dispatch(connectionActions.pairingStatusChanged(PairingStatus.Paired));
       dispatch(connectionActions.lastConnectedDeviceSet(device?.id ?? null));
+      if (device) {
+        dispatch(tvActions.deviceSelected(device.id));
+        dispatch(tvActions.deviceSaved(device));
+      }
     } else if (state === TVConnectionState.Error && error instanceof TVPairingError) {
       dispatch(connectionActions.pairingStatusChanged(PairingStatus.Failed));
     }

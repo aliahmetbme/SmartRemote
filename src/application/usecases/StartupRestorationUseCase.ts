@@ -5,6 +5,7 @@ import { RestoreLastTVUseCase } from './RestoreLastTVUseCase';
 export interface StartupResult {
   savedDevices: TVDevice[];
   restoredDevice: TVDevice | null;
+  lastSelectedId: string | null;
   error?: Error;
 }
 
@@ -20,6 +21,7 @@ export class StartupRestorationUseCase {
 
   async execute(): Promise<StartupResult> {
     const savedDevices = await this.repository.getAll();
+    const lastSelectedId = await this.repository.getLastSelectedId();
     let restoredDevice: TVDevice | null = null;
     let error: Error | undefined;
 
@@ -32,6 +34,7 @@ export class StartupRestorationUseCase {
     return {
       savedDevices,
       restoredDevice,
+      lastSelectedId,
       error,
     };
   }

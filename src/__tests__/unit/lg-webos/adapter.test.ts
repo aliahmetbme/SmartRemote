@@ -364,6 +364,35 @@ describe('LGWebOSAdapter commands', () => {
     expect(adapter.getConnectionState()).toBe(S.Connected);
   });
 
+  it('does not drop main SSAP connection when pointer socket cannot be opened and enforces failure cooldown', async () => {
+    let allowPointer = true;
+    const { adapter, server } = setup({
+      reachable: url => {
+        if (url.includes('netinput_pointer')) {
+          return allowPointer;
+        }
+        return true;
+      },
+    });
+    await adapter.connect(device);
+    expect(adapter.getConnectionState()).toBe(S.Connected);
+
+    // Drop pointer and simulate TV refusing new pointer sockets
+    allowPointer = false;
+    server.pointerSockets()[0].drop();
+
+    // movePointer should reject with TVConnectionError
+    await expect(adapter.movePointer(10, 10)).rejects.toBeInstanceOf(TVConnectionError);
+
+    // Main SSAP connection MUST remain Connected!
+    expect(adapter.getConnectionState()).toBe(S.Connected);
+
+    // Second immediate movePointer should fail fast during the 2000ms cooldown window without extra SSAP traffic
+    const ssapRequestCount = server.requests.length;
+    await expect(adapter.movePointer(10, 10)).rejects.toBeInstanceOf(TVConnectionError);
+    expect(server.requests.length).toBe(ssapRequestCount);
+  });
+
   it('rejects commands when not connected', async () => {
     const { adapter } = setup();
     await expect(adapter.volumeUp()).rejects.toBeInstanceOf(TVConnectionError);

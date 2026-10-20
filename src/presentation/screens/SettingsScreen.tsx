@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -29,12 +29,40 @@ export const SettingsScreen: React.FC = () => {
   const activeDeviceId = useAppSelector(selectSelectedDeviceId);
   const connectionStatus = useAppSelector(selectConnectionStatus);
 
-  const activeDevice = savedDevices.find(d => d.id === activeDeviceId);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const managerDevice = container.connectionManager.getDevice();
+  const activeDevice =
+    savedDevices.find(d => d.id === activeDeviceId) ??
+    (managerDevice ? { ...managerDevice } : null);
+
+  // Hydrate saved devices from repository on mount if Redux is empty
+  useEffect(() => {
+    let isMounted = true;
+    if (savedDevices.length === 0) {
+      setIsLoading(true);
+      container.deviceRepository
+        .getAll()
+        .then(devices => {
+          if (isMounted) {
+            if (devices.length > 0) {
+              dispatch(tvActions.savedDevicesLoaded(devices));
+            }
+            setIsLoading(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setIsLoading(false);
+        });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [container, dispatch, savedDevices.length]);
 
   const handleForgetDevice = (deviceId: string, deviceName: string) => {
     Alert.alert(
       'Forget Device',
-      `Are you sure you want to forget "${deviceName}"? Stored pairing keys will remain intact unless cleared.`,
+      `Are you sure you want to forget "${deviceName}"? Stored pairing keys will be removed.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -43,8 +71,11 @@ export const SettingsScreen: React.FC = () => {
           onPress: async () => {
             try {
               await container.deviceRepository.remove(deviceId);
+              if (container.credentialStorage) {
+                await container.credentialStorage.remove(deviceId).catch(() => undefined);
+              }
               dispatch(tvActions.deviceForgotten(deviceId));
-              if (activeDeviceId === deviceId) {
+              if (activeDeviceId === deviceId || managerDevice?.id === deviceId) {
                 await container.useCases.disconnectTV.execute().catch(() => undefined);
               }
             } catch (err: unknown) {
@@ -57,11 +88,29 @@ export const SettingsScreen: React.FC = () => {
     );
   };
 
+  const handleConnectDevice = async (device: (typeof savedDevices)[0]) => {
+    try {
+      await container.useCases.connectTV.execute(device);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not connect to TV';
+      Alert.alert('Connection Failed', msg);
+    }
+  };
+
   const handleDisconnect = async () => {
     try {
       await container.useCases.disconnectTV.execute();
     } catch {
       // Disconnect errors handled
+    }
+  };
+
+  const handleReconnect = async () => {
+    try {
+      await container.useCases.reconnectTV.execute();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not reconnect to TV';
+      Alert.alert('Reconnect Failed', msg);
     }
   };
 
@@ -92,18 +141,38 @@ export const SettingsScreen: React.FC = () => {
             </View>
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Status:</Text>
-              <Text style={[styles.infoValue, { color: connectionStatus === TVConnectionState.Connected ? theme.colors.connected : theme.colors.connecting }]}>
+              <Text
+                style={[
+                  styles.infoValue,
+                  {
+                    color:
+                      connectionStatus === TVConnectionState.Connected
+                        ? theme.colors.connected
+                        : connectionStatus === TVConnectionState.Error
+                        ? theme.colors.error
+                        : theme.colors.connecting,
+                  },
+                ]}
+              >
                 {connectionStatus}
               </Text>
             </View>
 
-            {connectionStatus === TVConnectionState.Connected && (
+            {connectionStatus === TVConnectionState.Connected ? (
               <TouchableOpacity
                 style={styles.disconnectButton}
                 onPress={handleDisconnect}
                 testID="settings-disconnect-btn"
               >
                 <Text style={styles.disconnectButtonText}>Disconnect Current TV</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.reconnectButton}
+                onPress={handleReconnect}
+                testID="settings-reconnect-btn"
+              >
+                <Text style={styles.reconnectButtonText}>Reconnect to TV</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -115,24 +184,71 @@ export const SettingsScreen: React.FC = () => {
       {/* Saved Devices Management */}
       <View style={styles.card}>
         <Text style={styles.cardHeader}>Saved TV Devices ({savedDevices.length})</Text>
-        {savedDevices.length === 0 ? (
+        {isLoading ? (
+          <Text style={styles.emptyText}>Loading saved devices...</Text>
+        ) : savedDevices.length === 0 ? (
           <Text style={styles.emptyText}>No saved TVs. Connect to a TV to save it for quick access.</Text>
         ) : (
-          savedDevices.map(device => (
-            <View style={styles.savedItemRow} key={device.id} testID={`saved-device-${device.id}`}>
-              <View style={styles.savedItemInfo}>
-                <Text style={styles.savedItemName}>{device.name}</Text>
-                <Text style={styles.savedItemSub}>{device.ipAddress}</Text>
+          savedDevices.map(device => {
+            const isDeviceActive =
+              device.id === activeDeviceId || device.id === managerDevice?.id;
+            const isDeviceConnected =
+              isDeviceActive && connectionStatus === TVConnectionState.Connected;
+            const isDeviceConnecting =
+              isDeviceActive &&
+              (connectionStatus === TVConnectionState.Connecting ||
+                connectionStatus === TVConnectionState.Reconnecting ||
+                connectionStatus === TVConnectionState.Pairing);
+
+            return (
+              <View style={styles.savedItemRow} key={device.id} testID={`saved-device-${device.id}`}>
+                <View style={styles.savedItemInfo}>
+                  <View style={styles.savedItemHeaderRow}>
+                    <View
+                      style={[
+                        styles.deviceStatusDot,
+                        isDeviceConnected
+                          ? styles.statusDotConnected
+                          : isDeviceConnecting
+                          ? styles.statusDotConnecting
+                          : styles.statusDotOffline,
+                      ]}
+                    />
+                    <Text style={styles.savedItemName}>{device.name}</Text>
+                  </View>
+                  <Text style={styles.savedItemSub}>
+                    {device.ipAddress} •{' '}
+                    {isDeviceConnected
+                      ? 'Connected'
+                      : isDeviceConnecting
+                      ? 'Connecting...'
+                      : 'Offline'}
+                  </Text>
+                </View>
+
+                <View style={styles.savedItemActions}>
+                  {!isDeviceConnected && (
+                    <TouchableOpacity
+                      style={styles.selectDeviceButton}
+                      onPress={() => handleConnectDevice(device)}
+                      testID={`connect-saved-btn-${device.id}`}
+                    >
+                      <Text style={styles.selectDeviceText}>
+                        {isDeviceConnecting ? 'Connecting...' : 'Connect'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={styles.forgetButton}
+                    onPress={() => handleForgetDevice(device.id, device.name)}
+                    testID={`forget-btn-${device.id}`}
+                  >
+                    <Text style={styles.forgetText}>Forget</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              <TouchableOpacity
-                style={styles.forgetButton}
-                onPress={() => handleForgetDevice(device.id, device.name)}
-                testID={`forget-btn-${device.id}`}
-              >
-                <Text style={styles.forgetText}>Forget</Text>
-              </TouchableOpacity>
-            </View>
-          ))
+            );
+          })
         )}
       </View>
 
@@ -229,6 +345,20 @@ const styles = StyleSheet.create({
     color: theme.colors.error,
     fontWeight: '700',
   },
+  reconnectButton: {
+    marginTop: theme.spacing.md,
+    backgroundColor: 'rgba(0, 210, 255, 0.15)',
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.secondary,
+    alignItems: 'center',
+  },
+  reconnectButtonText: {
+    ...theme.typography.caption,
+    color: theme.colors.secondary,
+    fontWeight: '700',
+  },
   savedItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -240,6 +370,25 @@ const styles = StyleSheet.create({
   savedItemInfo: {
     flex: 1,
   },
+  savedItemHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deviceStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginRight: 6,
+  },
+  statusDotConnected: {
+    backgroundColor: theme.colors.connected,
+  },
+  statusDotConnecting: {
+    backgroundColor: theme.colors.connecting,
+  },
+  statusDotOffline: {
+    backgroundColor: theme.colors.disconnected,
+  },
   savedItemName: {
     ...theme.typography.subtitle,
     color: theme.colors.textPrimary,
@@ -248,6 +397,25 @@ const styles = StyleSheet.create({
   savedItemSub: {
     fontSize: 12,
     color: theme.colors.textMuted,
+    marginTop: 2,
+  },
+  savedItemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  selectDeviceButton: {
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 6,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: theme.colors.secondary,
+  },
+  selectDeviceText: {
+    fontSize: 11,
+    color: theme.colors.secondary,
+    fontWeight: '700',
   },
   forgetButton: {
     paddingHorizontal: theme.spacing.md,

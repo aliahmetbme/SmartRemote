@@ -85,6 +85,7 @@ export class LGWebOSAdapter
   private client: LGWebOSWebSocketClient | null = null;
   private pointer: LGWebOSPointerClient | null = null;
   private pointerOpening: Promise<LGWebOSPointerClient> | null = null;
+  private lastPointerFailureTime: number = 0;
   private host = '';
   /** Incremented on every connect/disconnect so stale async work can detect cancellation. */
   private attempt = 0;
@@ -403,16 +404,37 @@ export class LGWebOSAdapter
   }
 
   private async openPointer(client: LGWebOSWebSocketClient): Promise<LGWebOSPointerClient> {
+    // 1. Cleanly tear down any prior pointer socket before asking the TV for a new one.
+    // ConnectSDK issue #65 shows that requesting a pointer socket while an existing one is
+    // half-open causes webOS to reset or drop the session.
+    if (this.pointer) {
+      const prevPointer = this.pointer;
+      this.pointer = null;
+      prevPointer.close();
+    }
+
     const payload = await client.request(SSAP_URI.pointerSocket);
     const path = payload.socketPath;
     if (typeof path !== 'string') {
       throw new TVConnectionError('TV did not return a pointer socket');
     }
-    this.pointer?.close();
+
     const pointer = new LGWebOSPointerClient(this.socketFactory, {
       connectTimeoutMs: this.deps.connectTimeoutMs,
       scheduler: this.deps.scheduler,
     });
+
+    // Attach onClose handler immediately so pointer drop is tracked cleanly,
+    // and never escalates into SSAP disconnection.
+    pointer.onClose(() => {
+      if (this.pointer === pointer) {
+        this.pointer = null;
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[SmartRemote][LGWebOSAdapter] Pointer socket closed by TV/remote peer');
+        }
+      }
+    });
+
     await pointer.connect(path, this.host);
     this.pointer = pointer;
     return pointer;
@@ -423,13 +445,24 @@ export class LGWebOSAdapter
       return Promise.resolve(this.pointer);
     }
     const client = this.client;
-    if (!client) {
+    if (!client || !client.isOpen()) {
       return Promise.reject(new TVConnectionError('TV is not connected'));
     }
+    const now = Date.now();
+    if (now - this.lastPointerFailureTime < 2000) {
+      return Promise.reject(
+        new TVConnectionError('Pointer socket reconnecting (cooldown)', 'connection_failed'),
+      );
+    }
     if (!this.pointerOpening) {
-      this.pointerOpening = this.openPointer(client).finally(() => {
-        this.pointerOpening = null;
-      });
+      this.pointerOpening = this.openPointer(client)
+        .catch(err => {
+          this.lastPointerFailureTime = Date.now();
+          throw err;
+        })
+        .finally(() => {
+          this.pointerOpening = null;
+        });
     }
     return this.pointerOpening;
   }

@@ -24,8 +24,11 @@ import { createDefaultAdapterFactory } from '../infrastructure/factories/TVAdapt
 import { LocalTVDeviceRepository } from '../infrastructure/repositories/LocalTVDeviceRepository';
 import { AsyncStorageKeyValueStorage } from '../infrastructure/storage/AsyncStorageKeyValueStorage';
 import { IKeyValueStorage } from '../infrastructure/storage/IKeyValueStorage';
+import { InMemoryCredentialStorage } from '../infrastructure/storage/InMemoryCredentialStorage';
 import { InMemoryKeyValueStorage } from '../infrastructure/storage/InMemoryKeyValueStorage';
 import { SecureCredentialStorage } from '../infrastructure/storage/SecureCredentialStorage';
+import { IMotionSensorService } from '../domain/interfaces/IMotionSensorService';
+import { CoreMotionSensorService } from '../infrastructure/sensors/CoreMotionSensorService';
 import { AppStore, createAppStore } from '../store';
 import { bindConnectionToStore } from './bindConnectionToStore';
 
@@ -37,13 +40,13 @@ export interface ContainerOverrides {
   credentialStorage?: ICredentialStorage;
   discoveryService?: ITVDiscoveryService;
   manualStrategy?: ManualIPDiscoveryStrategy;
+  motionSensorService?: IMotionSensorService;
 }
 
-/**
- * Composition root: wires domain, application, and infrastructure layers.
- */
 export function createContainer(overrides: ContainerOverrides = {}) {
   const store: AppStore = createAppStore();
+  const credentialStorage: ICredentialStorage =
+    overrides.credentialStorage ?? new InMemoryCredentialStorage();
   const deviceRepository: ITVDeviceRepository = new LocalTVDeviceRepository(
     overrides.keyValueStorage ?? new InMemoryKeyValueStorage(),
   );
@@ -66,6 +69,8 @@ export function createContainer(overrides: ContainerOverrides = {}) {
       strategies: [new LGWebOSSSDPDiscoveryStrategy(new NativeUdpSocketTransport())],
       manualStrategy,
     });
+  const motionSensorService: IMotionSensorService =
+    overrides.motionSensorService ?? new CoreMotionSensorService();
 
   const connectTV = new ConnectTVUseCase(connectionManager, deviceRepository);
   const restoreLastTV = new RestoreLastTVUseCase(connectionManager, deviceRepository);
@@ -81,6 +86,8 @@ export function createContainer(overrides: ContainerOverrides = {}) {
     connectionManager,
     discoveryService,
     discoveryManager,
+    motionSensorService,
+    credentialStorage,
     useCases: {
       connectTV,
       pairTV: new PairTVUseCase(connectTV),
