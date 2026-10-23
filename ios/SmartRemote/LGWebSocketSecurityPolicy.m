@@ -465,14 +465,19 @@ RCT_EXPORT_METHOD(connect:(nonnull NSNumber *)socketID urlString:(NSString *)url
   }
 
   NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
-  config.timeoutIntervalForRequest = 10.0;
-  config.timeoutIntervalForResource = 30.0;
+  // Allow reasonable idle gaps between commands/pings without killing the socket
+  config.timeoutIntervalForRequest = 60.0;
+  // Persistent WebSocket task lifetime is not arbitrarily terminated after 30s.
+  // Use Apple default resource timeout (7 days).
+  config.timeoutIntervalForResource = 604800.0;
 
   NSOperationQueue *queue = [[NSOperationQueue alloc] init];
   queue.maxConcurrentOperationCount = 1;
 
   NSURLSession *session = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:queue];
   NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+  // Handshake / initial TCP establishment timeout:
+  request.timeoutInterval = 10.0;
 
   NSURLSessionWebSocketTask *task = [session webSocketTaskWithRequest:request];
 
@@ -545,6 +550,27 @@ RCT_EXPORT_METHOD(close:(nonnull NSNumber *)socketID code:(nonnull NSNumber *)co
   [self cleanupSocketID:socketID];
 }
 
+RCT_EXPORT_METHOD(ping:(nonnull NSNumber *)socketID
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSURLSessionWebSocketTask *task = nil;
+  @synchronized(self) {
+    task = _tasks[socketID];
+  }
+  if (!task) {
+    reject(@"no_socket", [NSString stringWithFormat:@"Socket %ld not found", (long)[socketID integerValue]], nil);
+    return;
+  }
+  [task sendPingWithPongReceiveHandler:^(NSError * _Nullable error) {
+    if (error) {
+      reject(@"ping_failed", error.localizedDescription, error);
+    } else {
+      resolve(@YES);
+    }
+  }];
+}
+
 #pragma mark - NSURLSessionWebSocketDelegate
 
 - (void)URLSession:(NSURLSession *)session
@@ -615,7 +641,9 @@ didCompleteWithError:(nullable NSError *)error
   [self safeSendEvent:@"onLGWebSocketClosed" body:@{
     @"id": socketID,
     @"code": @(1006),
-    @"reason": error.localizedDescription ?: @"Connection terminated abnormally"
+    @"reason": error.localizedDescription ?: @"Connection terminated abnormally",
+    @"domain": error.domain ?: @"",
+    @"errorCode": @(error.code)
   }];
 }
 

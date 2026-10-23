@@ -1,3 +1,4 @@
+import { InstalledApp } from '../entities/InstalledApp';
 import { TVCapabilities } from '../entities/TVCapabilities';
 import { TVDevice } from '../entities/TVDevice';
 import { NavigationDirection, RemoteKey } from '../enums/RemoteKey';
@@ -33,6 +34,10 @@ export interface ITVRemoteAdapter {
   back(): Promise<void>;
   home(): Promise<void>;
   powerOff(): Promise<void>;
+
+  pauseHeartbeat?(): void;
+  resumeHeartbeat?(): void;
+  checkLiveness?(): Promise<boolean>;
 }
 
 // Optional, capability-specific interfaces. Adapters implement only what
@@ -46,6 +51,7 @@ export interface IVolumeSetAdapter {
 }
 export interface IAppLaunchAdapter {
   launchApp(appId: string): Promise<void>;
+  getInstalledApps?(): Promise<InstalledApp[]>;
 }
 export interface IInputSwitchAdapter {
   openInput(inputId: string): Promise<void>;

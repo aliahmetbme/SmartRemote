@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppSelector } from '../../store/hooks';
@@ -16,12 +17,15 @@ import {
   selectSavedDevices,
 } from '../../store/selectors';
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
-import { NavigationDirection } from '../../domain/enums/RemoteKey';
 import { TVCapability } from '../../domain/entities/TVCapabilities';
 import { useContainer } from '../context/ContainerContext';
 import { Touchpad } from '../components/Touchpad';
 import { NumericKeypad } from '../components/NumericKeypad';
 import { MotionSurface } from '../components/MotionSurface';
+import { VolumeRocker } from '../components/VolumeRocker';
+import { ChannelRocker } from '../components/ChannelRocker';
+import { DirectionPad } from '../components/DirectionPad';
+import { RemoteMode, RemoteModeSelector } from '../components/RemoteModeSelector';
 import { theme } from '../theme';
 
 interface RemoteScreenProps {
@@ -37,14 +41,16 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
   const savedDevices = useAppSelector(selectSavedDevices);
   const capabilities = useAppSelector(selectCapabilities);
 
-  const [activeTab, setActiveTab] = useState<'buttons' | 'touchpad' | 'numbers' | 'motion'>('buttons');
+  const [activeTab, setActiveTab] = useState<RemoteMode>('buttons');
   const [isTouchpadActive, setIsTouchpadActive] = useState<boolean>(false);
   const [isMotionActive, setIsMotionActive] = useState<boolean>(false);
+  const [launchingAppId, setLaunchingAppId] = useState<string | null>(null);
 
   const managerDevice = container.connectionManager.getDevice();
   const activeDevice =
     savedDevices.find(d => d.id === activeDeviceId) ??
-    (managerDevice ? managerDevice : null);
+    (managerDevice ? managerDevice : null) ??
+    (savedDevices.length > 0 ? savedDevices[0] : null);
   const tvDisplayName = activeDevice
     ? activeDevice.name
     : managerDevice
@@ -54,16 +60,53 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
     : 'No TV Selected';
   const isConnected = connectionStatus === TVConnectionState.Connected;
 
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.log(
+      `[SmartRemote][RemoteScreen] Active TV='${tvDisplayName}', state=${connectionStatus}, activeDeviceId='${activeDeviceId}', savedCount=${savedDevices.length}`,
+    );
+  }
+
   const isCapable = (cap: TVCapability): boolean => {
     if (!capabilities) return false;
     return capabilities[cap] !== 'unsupported';
   };
 
   const handleCommand = (action: () => Promise<void>, _operationName: string) => {
-    if (!isConnected) return;
+    if (!isConnected) {
+      Alert.alert('TV Disconnected', 'Please connect to your TV to send commands.');
+      return;
+    }
     action().catch(() => {
       // Non-fatal command error
     });
+  };
+
+  const handleLaunchApp = async (targetAlias: string) => {
+    if (!isConnected) {
+      Alert.alert('TV Disconnected', 'Please connect to your TV to launch applications.');
+      return;
+    }
+    setLaunchingAppId(targetAlias);
+    try {
+      // Resolve app ID through GetInstalledAppsUseCase
+      const resolvedId = await container.useCases.getInstalledApps.resolveAppId(targetAlias);
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log(`[SmartRemote][LaunchApp] Launching alias '${targetAlias}' as '${resolvedId}'`);
+      }
+      await container.useCases.sendRemoteCommand.execute({
+        type: 'launchApp',
+        appId: resolvedId,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to launch application';
+      console.warn(`[SmartRemote][LaunchApp] Failed to launch ${targetAlias}: ${msg}`);
+      Alert.alert(
+        'App Launch Failed',
+        `Could not launch ${targetAlias.toUpperCase()} on this TV. ${msg}`,
+      );
+    } finally {
+      setLaunchingAppId(null);
+    }
   };
 
   const renderStatusBadge = () => {
@@ -109,233 +152,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
     );
   };
 
-  const renderVolumeRocker = () => {
-    const isVolCapable = isCapable('volumeControl');
-    const isMuteCapable = isCapable('muteControl');
-
-    return (
-      <View style={styles.rockerColumn}>
-        <TouchableOpacity
-          style={[
-            styles.rockerButton,
-            styles.rockerTop,
-            (!isConnected || !isVolCapable) && styles.controlDisabled,
-          ]}
-          disabled={!isConnected || !isVolCapable}
-          onPress={() =>
-            handleCommand(
-              () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
-              'volumeUp',
-            )
-          }
-          testID="btn-vol-up"
-          accessibilityLabel="Volume Up"
-          accessibilityRole="button"
-        >
-          <Text style={styles.rockerLabel}>VOL +</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.rockerButton,
-            styles.rockerCenter,
-            (!isConnected || !isMuteCapable) && styles.controlDisabled,
-          ]}
-          disabled={!isConnected || !isMuteCapable}
-          onPress={() =>
-            handleCommand(
-              () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
-              'mute',
-            )
-          }
-          testID="btn-mute"
-          accessibilityLabel="Mute"
-          accessibilityRole="button"
-        >
-          <Text style={styles.muteLabel}>MUTE</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.rockerButton,
-            styles.rockerBottom,
-            (!isConnected || !isVolCapable) && styles.controlDisabled,
-          ]}
-          disabled={!isConnected || !isVolCapable}
-          onPress={() =>
-            handleCommand(
-              () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
-              'volumeDown',
-            )
-          }
-          testID="btn-vol-down"
-          accessibilityLabel="Volume Down"
-          accessibilityRole="button"
-        >
-          <Text style={styles.rockerLabel}>VOL -</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  };
-
-  const renderChannelRocker = () => {
-    const isChCapable = isCapable('channelControl');
-
-    return (
-      <View style={styles.rockerColumn}>
-        <TouchableOpacity
-          style={[
-            styles.rockerButton,
-            styles.rockerTop,
-            (!isConnected || !isChCapable) && styles.controlDisabled,
-          ]}
-          disabled={!isConnected || !isChCapable}
-          onPress={() =>
-            handleCommand(
-              () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
-              'channelUp',
-            )
-          }
-          testID="btn-ch-up"
-          accessibilityLabel="Channel Up"
-          accessibilityRole="button"
-        >
-          <Text style={styles.rockerLabel}>CH +</Text>
-        </TouchableOpacity>
-
-        <View style={[styles.rockerButton, styles.rockerCenter, styles.rockerPlaceholder]}>
-          <View style={styles.rockerDividerDot} />
-        </View>
-
-        <TouchableOpacity
-          style={[
-            styles.rockerButton,
-            styles.rockerBottom,
-            (!isConnected || !isChCapable) && styles.controlDisabled,
-          ]}
-          disabled={!isConnected || !isChCapable}
-          onPress={() =>
-            handleCommand(
-              () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
-              'channelDown',
-            )
-          }
-          testID="btn-ch-down"
-          accessibilityLabel="Channel Down"
-          accessibilityRole="button"
-        >
-          <Text style={styles.rockerLabel}>CH -</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  };
-
-  const renderDPad = () => (
-    <View style={styles.dpadContainer} testID="dpad-cluster">
-      {/* Up */}
-      <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadUp, !isConnected && styles.controlDisabled]}
-        disabled={!isConnected}
-        onPress={() =>
-          handleCommand(
-            () =>
-              container.useCases.sendRemoteCommand.execute({
-                type: 'navigate',
-                direction: NavigationDirection.Up,
-              }),
-            'navigateUp',
-          )
-        }
-        testID="btn-nav-up"
-        accessibilityLabel="Navigate Up"
-        accessibilityRole="button"
-      >
-        <Text style={styles.arrowText}>▲</Text>
-      </TouchableOpacity>
-
-      {/* Left */}
-      <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadLeft, !isConnected && styles.controlDisabled]}
-        disabled={!isConnected}
-        onPress={() =>
-          handleCommand(
-            () =>
-              container.useCases.sendRemoteCommand.execute({
-                type: 'navigate',
-                direction: NavigationDirection.Left,
-              }),
-            'navigateLeft',
-          )
-        }
-        testID="btn-nav-left"
-        accessibilityLabel="Navigate Left"
-        accessibilityRole="button"
-      >
-        <Text style={styles.arrowText}>◀</Text>
-      </TouchableOpacity>
-
-      {/* Center OK */}
-      <TouchableOpacity
-        style={[styles.dpadCenter, !isConnected && styles.controlDisabled]}
-        disabled={!isConnected}
-        onPress={() =>
-          handleCommand(
-            () => container.useCases.sendRemoteCommand.execute({ type: 'select' }),
-            'select',
-          )
-        }
-        testID="btn-nav-ok"
-        accessibilityLabel="OK / Select"
-        accessibilityRole="button"
-      >
-        <Text style={styles.dpadCenterText}>OK</Text>
-      </TouchableOpacity>
-
-      {/* Right */}
-      <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadRight, !isConnected && styles.controlDisabled]}
-        disabled={!isConnected}
-        onPress={() =>
-          handleCommand(
-            () =>
-              container.useCases.sendRemoteCommand.execute({
-                type: 'navigate',
-                direction: NavigationDirection.Right,
-              }),
-            'navigateRight',
-          )
-        }
-        testID="btn-nav-right"
-        accessibilityLabel="Navigate Right"
-        accessibilityRole="button"
-      >
-        <Text style={styles.arrowText}>▶</Text>
-      </TouchableOpacity>
-
-      {/* Down */}
-      <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadDown, !isConnected && styles.controlDisabled]}
-        disabled={!isConnected}
-        onPress={() =>
-          handleCommand(
-            () =>
-              container.useCases.sendRemoteCommand.execute({
-                type: 'navigate',
-                direction: NavigationDirection.Down,
-              }),
-            'navigateDown',
-          )
-        }
-        testID="btn-nav-down"
-        accessibilityLabel="Navigate Down"
-        accessibilityRole="button"
-      >
-        <Text style={styles.arrowText}>▼</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const handleTabChange = (tab: 'buttons' | 'touchpad' | 'numbers' | 'motion') => {
+  const handleTabChange = (tab: RemoteMode) => {
     setIsTouchpadActive(false);
     setIsMotionActive(false);
     setActiveTab(tab);
@@ -344,11 +161,17 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={[styles.contentContainer, { paddingTop: Math.max(insets.top, 16) }]}
+      contentContainerStyle={[
+        styles.contentContainer,
+        {
+          paddingTop: Math.max(insets.top, 16),
+          paddingBottom: Math.max(insets.bottom, 24) + 64,
+        },
+      ]}
       scrollEnabled={!isTouchpadActive && !isMotionActive}
       testID="remote-screen"
     >
-      {/* Top Bar: TV Name, Status, Switch TV Button */}
+      {/* 1. Connected TV header & Power */}
       <View style={styles.topBar} testID="remote-header">
         <View style={styles.tvInfoCol}>
           <Text style={styles.tvName} numberOfLines={1} testID="tv-header-title">
@@ -370,66 +193,15 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
         )}
       </View>
 
-      {/* Mode Switcher: Buttons vs Touchpad vs Numbers */}
-      <View style={styles.modeSwitcherRow}>
-        <TouchableOpacity
-          style={[styles.modeTab, activeTab === 'buttons' && styles.modeTabActive]}
-          onPress={() => handleTabChange('buttons')}
-          testID="tab-buttons"
-          accessibilityRole="button"
-          accessibilityLabel="Buttons Mode"
-        >
-          <Text style={[styles.modeTabText, activeTab === 'buttons' && styles.modeTabTextActive]}>
-            Buttons
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.modeTab, activeTab === 'touchpad' && styles.modeTabActive]}
-          onPress={() => handleTabChange('touchpad')}
-          testID="tab-touchpad"
-          accessibilityRole="button"
-          accessibilityLabel="Touchpad Mode"
-        >
-          <Text style={[styles.modeTabText, activeTab === 'touchpad' && styles.modeTabTextActive]}>
-            Touchpad
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.modeTab, activeTab === 'numbers' && styles.modeTabActive]}
-          onPress={() => handleTabChange('numbers')}
-          testID="tab-numbers"
-          accessibilityRole="button"
-          accessibilityLabel="Numbers Mode"
-        >
-          <Text
-            style={[styles.modeTabText, activeTab === 'numbers' && styles.modeTabTextActive]}
-            numberOfLines={1}
-          >
-            Numbers
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.modeTab, activeTab === 'motion' && styles.modeTabActive]}
-          onPress={() => handleTabChange('motion')}
-          testID="tab-motion"
-          accessibilityRole="button"
-          accessibilityLabel="Motion Mode"
-        >
-          <Text
-            style={[styles.modeTabText, activeTab === 'motion' && styles.modeTabTextActive]}
-            numberOfLines={1}
-          >
-            Motion
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* 2. 3-Mode Selector: Buttons | Touchpad | Motion */}
+      <RemoteModeSelector
+        activeMode={activeTab}
+        onModeChange={handleTabChange}
+      />
 
       {/* Remote Body Card */}
       <View style={styles.remoteBody}>
-        {/* System Row: Power, Home, Back */}
+        {/* System Controls: Power, Home, Back */}
         <View style={styles.topRowControls}>
           {/* Power Button */}
           <TouchableOpacity
@@ -488,35 +260,177 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
 
         {/* Dynamic Mode Content */}
         {activeTab === 'buttons' && (
-          /* Buttons Mode: Rockers + D-Pad Navigation */
-          <View style={styles.middleControlRow}>
-            {renderVolumeRocker()}
-            {renderDPad()}
-            {renderChannelRocker()}
+          <View testID="buttons-mode-content">
+            {/* 3. Volume, D-Pad, and Channel Cluster */}
+            <View style={styles.middleControlRow}>
+              <VolumeRocker
+                onVolumeUp={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
+                    'volumeUp',
+                  )
+                }
+                onVolumeDown={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
+                    'volumeDown',
+                  )
+                }
+                onMute={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
+                    'mute',
+                  )
+                }
+                disabled={!isConnected}
+                volDisabled={!isCapable('volumeControl')}
+                muteDisabled={!isCapable('muteControl')}
+              />
+
+              <DirectionPad
+                onNavigate={direction =>
+                  handleCommand(
+                    () =>
+                      container.useCases.sendRemoteCommand.execute({
+                        type: 'navigate',
+                        direction,
+                      }),
+                    `navigate-${direction}`,
+                  )
+                }
+                onSelect={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'select' }),
+                    'select',
+                  )
+                }
+                disabled={!isConnected}
+              />
+
+              <ChannelRocker
+                onChannelUp={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
+                    'channelUp',
+                  )
+                }
+                onChannelDown={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
+                    'channelDown',
+                  )
+                }
+                disabled={!isConnected || !isCapable('channelControl')}
+              />
+            </View>
+
+            {/* 4. NumericKeypad inside Buttons mode */}
+            <View style={styles.keypadContainer} testID="keypad-buttons-section">
+              <NumericKeypad style={styles.numbersKeypadSurface} />
+            </View>
+
+            {/* 5. Existing Application Shortcuts (YouTube, Amazon Prime Video, Netflix) */}
+            <View style={styles.shortcutsSection} testID="app-shortcuts-section">
+              <Text style={styles.sectionTitle}>Apps</Text>
+              <View style={styles.chipsRow}>
+                {['netflix', 'youtube', 'amazon'].map(appId => (
+                  <TouchableOpacity
+                    key={appId}
+                    style={[styles.appChip, !isConnected && styles.controlDisabled]}
+                    disabled={launchingAppId !== null}
+                    onPress={() => handleLaunchApp(appId)}
+                    testID={`btn-app-${appId}`}
+                    accessibilityLabel={`Launch ${appId}`}
+                    accessibilityRole="button"
+                  >
+                    {launchingAppId === appId ? (
+                      <ActivityIndicator size="small" color="#D4DAE8" />
+                    ) : (
+                      <Text style={styles.chipText}>
+                        {appId === 'amazon' ? 'PRIME VIDEO' : appId.toUpperCase()}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* 6. Existing Input/Source Shortcuts */}
+            <View style={styles.shortcutsSection} testID="input-switching-section">
+              <Text style={styles.sectionTitle}>Inputs</Text>
+              <View style={styles.chipsRow}>
+                {['HDMI_1', 'HDMI_2', 'AV_1'].map(inputId => (
+                  <TouchableOpacity
+                    key={inputId}
+                    style={[styles.inputChip, !isConnected && styles.controlDisabled]}
+                    onPress={() =>
+                      handleCommand(
+                        () =>
+                          container.useCases.sendRemoteCommand.execute({
+                            type: 'openInput',
+                            inputId,
+                          }),
+                        `openInput-${inputId}`,
+                      )
+                    }
+                    testID={`btn-input-${inputId}`}
+                    accessibilityLabel={`Switch to ${inputId}`}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.chipText}>{inputId.replace('_', ' ')}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
           </View>
         )}
 
         {activeTab === 'touchpad' && (
-          /* Touchpad Mode: Generous gesture surface with Rockers accessible underneath */
+          /* Touchpad Mode: Gesture surface with Rockers accessible underneath */
           <View style={styles.touchpadSection}>
             <Touchpad
               style={styles.touchpadExpandedSurface}
               onActiveChange={setIsTouchpadActive}
             />
             <View style={styles.touchpadRockersRow}>
-              {renderVolumeRocker()}
-              {renderChannelRocker()}
-            </View>
-          </View>
-        )}
-
-        {activeTab === 'numbers' && (
-          /* Numbers Mode: 4x3 Numeric Keypad with Rockers accessible underneath */
-          <View style={styles.numbersSection}>
-            <NumericKeypad style={styles.numbersKeypadSurface} />
-            <View style={styles.numbersRockersRow}>
-              {renderVolumeRocker()}
-              {renderChannelRocker()}
+              <VolumeRocker
+                onVolumeUp={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
+                    'volumeUp',
+                  )
+                }
+                onVolumeDown={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
+                    'volumeDown',
+                  )
+                }
+                onMute={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
+                    'mute',
+                  )
+                }
+                disabled={!isConnected}
+                volDisabled={!isCapable('volumeControl')}
+                muteDisabled={!isCapable('muteControl')}
+              />
+              <ChannelRocker
+                onChannelUp={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
+                    'channelUp',
+                  )
+                }
+                onChannelDown={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
+                    'channelDown',
+                  )
+                }
+                disabled={!isConnected || !isCapable('channelControl')}
+              />
             </View>
           </View>
         )}
@@ -529,70 +443,44 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
               onActiveChange={setIsMotionActive}
             />
             <View style={styles.motionRockersRow}>
-              {renderVolumeRocker()}
-              {renderChannelRocker()}
-            </View>
-          </View>
-        )}
-
-        {/* App Shortcuts (Rendered if appLaunching capability is not unsupported) */}
-        {isCapable('appLaunching') && (
-          <View style={styles.shortcutsSection} testID="app-shortcuts-section">
-            <Text style={styles.sectionTitle}>Apps</Text>
-            <View style={styles.chipsRow}>
-              {['netflix', 'youtube', 'amazon'].map(appId => (
-                <TouchableOpacity
-                  key={appId}
-                  style={[styles.appChip, !isConnected && styles.controlDisabled]}
-                  disabled={!isConnected}
-                  onPress={() =>
-                    handleCommand(
-                      () =>
-                        container.useCases.sendRemoteCommand.execute({
-                          type: 'launchApp',
-                          appId,
-                        }),
-                      `launchApp-${appId}`,
-                    )
-                  }
-                  testID={`btn-app-${appId}`}
-                  accessibilityLabel={`Launch ${appId}`}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.chipText}>{appId.toUpperCase()}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* Input Switching (Rendered if inputSwitching capability is not unsupported) */}
-        {isCapable('inputSwitching') && (
-          <View style={styles.shortcutsSection} testID="input-switching-section">
-            <Text style={styles.sectionTitle}>Inputs</Text>
-            <View style={styles.chipsRow}>
-              {['HDMI_1', 'HDMI_2', 'AV_1'].map(inputId => (
-                <TouchableOpacity
-                  key={inputId}
-                  style={[styles.inputChip, !isConnected && styles.controlDisabled]}
-                  disabled={!isConnected}
-                  onPress={() =>
-                    handleCommand(
-                      () =>
-                        container.useCases.sendRemoteCommand.execute({
-                          type: 'openInput',
-                          inputId,
-                        }),
-                      `openInput-${inputId}`,
-                    )
-                  }
-                  testID={`btn-input-${inputId}`}
-                  accessibilityLabel={`Switch to ${inputId}`}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.chipText}>{inputId.replace('_', ' ')}</Text>
-                </TouchableOpacity>
-              ))}
+              <VolumeRocker
+                onVolumeUp={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
+                    'volumeUp',
+                  )
+                }
+                onVolumeDown={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
+                    'volumeDown',
+                  )
+                }
+                onMute={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
+                    'mute',
+                  )
+                }
+                disabled={!isConnected}
+                volDisabled={!isCapable('volumeControl')}
+                muteDisabled={!isCapable('muteControl')}
+              />
+              <ChannelRocker
+                onChannelUp={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
+                    'channelUp',
+                  )
+                }
+                onChannelDown={() =>
+                  handleCommand(
+                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
+                    'channelDown',
+                  )
+                }
+                disabled={!isConnected || !isCapable('channelControl')}
+              />
             </View>
           </View>
         )}
@@ -663,37 +551,6 @@ const styles = StyleSheet.create({
     color: '#D4DAE8',
     fontWeight: '600',
   },
-  modeSwitcherRow: {
-    flexDirection: 'row',
-    backgroundColor: '#131722',
-    borderRadius: theme.borderRadius.full,
-    padding: 3,
-    marginBottom: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: '#262F42',
-  },
-  modeTab: {
-    flex: 1,
-    paddingVertical: 7,
-    paddingHorizontal: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: theme.borderRadius.full,
-  },
-  modeTabActive: {
-    backgroundColor: '#263045',
-    borderWidth: 1,
-    borderColor: '#3E4D6E',
-  },
-  modeTabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#7E879B',
-  },
-  modeTabTextActive: {
-    color: theme.colors.textPrimary,
-    fontWeight: '700',
-  },
   remoteBody: {
     backgroundColor: '#151924',
     borderRadius: 28,
@@ -746,104 +603,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: theme.spacing.lg,
   },
-  rockerColumn: {
-    width: 66,
-    height: 196,
-    borderRadius: 33,
-    backgroundColor: '#1B2130',
-    borderWidth: 1.5,
-    borderColor: '#2B354C',
-    overflow: 'hidden',
-  },
-  rockerButton: {
-    flex: 1,
-    justifyContent: 'center',
+  keypadContainer: {
+    marginTop: theme.spacing.xs,
+    marginBottom: theme.spacing.md,
     alignItems: 'center',
-  },
-  rockerTop: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#252D3F',
-  },
-  rockerCenter: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#252D3F',
-  },
-  rockerBottom: {},
-  rockerPlaceholder: {
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  rockerDividerDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#3B455E',
-  },
-  rockerLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#B6BECE',
-  },
-  muteLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#E07A5F',
-  },
-  dpadContainer: {
-    width: 196,
-    height: 196,
-    borderRadius: 98,
-    backgroundColor: '#121620',
-    borderWidth: 1.5,
-    borderColor: '#2B354C',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  dpadArrow: {
-    position: 'absolute',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  dpadUp: {
-    top: 4,
-    width: 60,
-    height: 44,
-  },
-  dpadDown: {
-    bottom: 4,
-    width: 60,
-    height: 44,
-  },
-  dpadLeft: {
-    left: 4,
-    width: 44,
-    height: 60,
-  },
-  dpadRight: {
-    right: 4,
-    width: 44,
-    height: 60,
-  },
-  arrowText: {
-    fontSize: 18,
-    color: '#B6BECE',
-  },
-  dpadCenter: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#263045',
-    borderWidth: 2,
-    borderColor: '#3F4E70',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 5,
-  },
-  dpadCenterText: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: theme.colors.textPrimary,
   },
   touchpadSection: {
     marginBottom: theme.spacing.lg,
@@ -859,17 +623,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: theme.spacing.xl,
   },
-  numbersSection: {
-    marginBottom: theme.spacing.lg,
-  },
   numbersKeypadSurface: {
-    marginBottom: theme.spacing.md,
-  },
-  numbersRockersRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.xl,
+    marginBottom: 0,
   },
   motionSection: {
     marginBottom: theme.spacing.lg,
@@ -909,6 +664,9 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
     borderColor: '#2F3A52',
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   inputChip: {
     backgroundColor: '#1A2130',
@@ -917,6 +675,9 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.full,
     borderWidth: 1,
     borderColor: '#2B354C',
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   chipText: {
     ...theme.typography.caption,

@@ -35,6 +35,7 @@ export const SSAP_URI = {
   switchInput: 'ssap://tv/switchInput',
   powerOff: 'ssap://system/turnOff',
   launchApp: 'ssap://system.launcher/launch',
+  listApps: 'ssap://com.webos.applicationManager/listApps',
   insertText: 'ssap://com.webos.service.ime/insertText',
   serviceList: 'ssap://api/getServiceList',
   pointerSocket: 'ssap://com.webos.service.networkinput/getPointerInputSocket',
@@ -81,6 +82,9 @@ export const LGWebOSCommandMapper = {
   launchApp(appId: string): LGWebOSCommand {
     if (!appId) throw new RangeError('appId is required');
     return ssap(SSAP_URI.launchApp, { id: appId });
+  },
+  listApps(): LGWebOSCommand {
+    return ssap(SSAP_URI.listApps);
   },
   openInput(inputId: string): LGWebOSCommand {
     if (!inputId) throw new RangeError('inputId is required');

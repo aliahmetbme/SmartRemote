@@ -9,13 +9,21 @@ import {
  * Minimal WebSocket surface used by the LG webOS code.
  * Implemented by both React Native's global WebSocket and dedicated native transports.
  */
+export interface IWebSocketCloseEvent {
+  code?: number;
+  reason?: string;
+  domain?: string;
+  errorCode?: number;
+}
+
 export interface IWebSocketTransport {
   onopen: (() => void) | null;
   onmessage: ((event: { data: unknown }) => void) | null;
   onerror: ((event: unknown) => void) | null;
-  onclose: ((event: { code?: number; reason?: string }) => void) | null;
+  onclose: ((event: IWebSocketCloseEvent) => void) | null;
   send(data: string): void;
   close(code?: number, reason?: string): void;
+  ping?(): Promise<void>;
 }
 
 export type WebSocketFactory = (url: string) => IWebSocketTransport;
@@ -38,6 +46,7 @@ export interface LGNativeWebSocketEventMap {
   code?: number;
   reason?: string;
   domain?: string;
+  errorCode?: number;
 }
 
 let nextSocketId = 1;
@@ -58,7 +67,7 @@ export class LGNativeWebSocketTransport implements IWebSocketTransport {
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
-  onclose: ((event: { code?: number; reason?: string }) => void) | null = null;
+  onclose: ((event: IWebSocketCloseEvent) => void) | null = null;
 
   constructor(
     url: string,
@@ -129,7 +138,12 @@ export class LGNativeWebSocketTransport implements IWebSocketTransport {
             }
             this.closed = true;
             this.cleanup();
-            this.onclose?.({ code: event.code ?? 1000, reason: event.reason ?? '' });
+            this.onclose?.({
+              code: event.code ?? 1000,
+              reason: event.reason ?? '',
+              domain: event.domain,
+              errorCode: event.errorCode,
+            });
           }
         }),
       );
@@ -143,6 +157,13 @@ export class LGNativeWebSocketTransport implements IWebSocketTransport {
         this.onclose?.({ code: 1006, reason: 'Native initialization failure' });
       }, 0);
     }
+  }
+
+  async ping(): Promise<void> {
+    if (this.closed || !this.nativeModule) {
+      throw new Error('WebSocket is closed or native module unavailable');
+    }
+    await this.nativeModule.ping(this.socketId);
   }
 
   send(data: string): void {

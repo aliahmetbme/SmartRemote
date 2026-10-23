@@ -11,6 +11,7 @@ import { ProbeManualIPUseCase } from '../application/usecases/ProbeManualIPUseCa
 import { ReconnectTVUseCase } from '../application/usecases/ReconnectTVUseCase';
 import { RestoreLastTVUseCase } from '../application/usecases/RestoreLastTVUseCase';
 import { SendRemoteCommandUseCase } from '../application/usecases/SendRemoteCommandUseCase';
+import { GetInstalledAppsUseCase } from '../application/usecases/GetInstalledAppsUseCase';
 import { StartupRestorationUseCase } from '../application/usecases/StartupRestorationUseCase';
 import { ICredentialStorage } from '../domain/interfaces/ICredentialStorage';
 import { ITVAdapterFactory } from '../domain/interfaces/ITVAdapterFactory';
@@ -60,7 +61,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   const connectionManager = new TVConnectionManager(adapterFactory, {
     scheduler: overrides.scheduler,
   });
-  bindConnectionToStore(connectionManager, store.dispatch);
+  bindConnectionToStore(connectionManager, store.dispatch, deviceRepository);
 
   const manualStrategy = overrides.manualStrategy ?? new ManualIPDiscoveryStrategy();
   const discoveryService: ITVDiscoveryService =
@@ -78,6 +79,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   const probeManualIP = new ProbeManualIPUseCase(manualStrategy);
   const startupRestoration = new StartupRestorationUseCase(deviceRepository, restoreLastTV);
   const discoveryManager = new DiscoveryManager(discoverTVs, store.dispatch);
+  const getInstalledApps = new GetInstalledAppsUseCase(connectionManager);
 
   return {
     store,
@@ -98,6 +100,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
       discoverTVs,
       probeManualIP,
       startupRestoration,
+      getInstalledApps,
     },
   };
 }

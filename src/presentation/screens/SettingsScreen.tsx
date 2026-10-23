@@ -33,9 +33,16 @@ export const SettingsScreen: React.FC = () => {
   const managerDevice = container.connectionManager.getDevice();
   const activeDevice =
     savedDevices.find(d => d.id === activeDeviceId) ??
-    (managerDevice ? { ...managerDevice } : null);
+    (managerDevice ? { ...managerDevice } : null) ??
+    (savedDevices.length > 0 ? savedDevices[0] : null);
 
-  // Hydrate saved devices from repository on mount if Redux is empty
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.log(
+      `[SmartRemote][SettingsScreen] Active TV='${activeDevice?.name ?? 'none'}', status='${connectionStatus}', savedCount=${savedDevices.length}`,
+    );
+  }
+
+  // Hydrate saved devices from repository on mount
   useEffect(() => {
     let isMounted = true;
     if (savedDevices.length === 0) {
@@ -44,15 +51,23 @@ export const SettingsScreen: React.FC = () => {
         .getAll()
         .then(devices => {
           if (isMounted) {
-            if (devices.length > 0) {
-              dispatch(tvActions.savedDevicesLoaded(devices));
-            }
+            dispatch(tvActions.savedDevicesLoaded(devices));
             setIsLoading(false);
           }
         })
         .catch(() => {
           if (isMounted) setIsLoading(false);
         });
+    } else {
+      // Background sync: update repository devices if found
+      container.deviceRepository
+        .getAll()
+        .then(devices => {
+          if (isMounted && devices.length > 0) {
+            dispatch(tvActions.savedDevicesLoaded(devices));
+          }
+        })
+        .catch(() => undefined);
     }
     return () => {
       isMounted = false;

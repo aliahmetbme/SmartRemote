@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -50,6 +50,31 @@ export const TVDiscoveryScreen: React.FC = () => {
   const [manualIp, setManualIp] = useState('');
   const [ipError, setIpError] = useState<string | null>(null);
   const [isProbingIp, setIsProbingIp] = useState(false);
+
+  // Hydrate saved devices from persistent storage on mount if store is empty
+  useEffect(() => {
+    let isMounted = true;
+    if (savedDevices.length === 0) {
+      container.deviceRepository
+        .getAll()
+        .then(devices => {
+          if (isMounted && devices.length > 0) {
+            container.store.dispatch(tvActions.savedDevicesLoaded(devices));
+          }
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [container, savedDevices.length]);
+
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    // Non-sensitive dev diagnostics
+    console.log(
+      `[SmartRemote][DiscoveryScreen] Rendered with ${savedDevices.length} saved TV(s), activeId='${activeDeviceId}', status='${connectionStatus}'`,
+    );
+  }
 
   const isScanning = discoveryStatus === 'scanning';
   const isConnecting = connectionStatus === TVConnectionState.Connecting;
@@ -174,17 +199,47 @@ export const TVDiscoveryScreen: React.FC = () => {
   };
 
   const renderDeviceItem = (device: TVDevice, isSaved: boolean) => {
-    const isCurrentActive = activeDeviceId === device.id && connectionStatus === TVConnectionState.Connected;
-    const isPending = activeDeviceId === device.id && (isConnecting || isPairing);
+    const isCurrentActive =
+      activeDeviceId === device.id && connectionStatus === TVConnectionState.Connected;
+    const isPending =
+      activeDeviceId === device.id && (isConnecting || isPairing);
+    const isThisDeviceConnecting =
+      activeDeviceId === device.id &&
+      (connectionStatus === TVConnectionState.Connecting ||
+        connectionStatus === TVConnectionState.Reconnecting ||
+        connectionStatus === TVConnectionState.Pairing);
 
     return (
       <View style={styles.deviceCard} key={device.id} testID={`device-item-${device.id}`}>
         <View style={styles.deviceInfo}>
-          <Text style={styles.deviceName} numberOfLines={1}>
-            {device.name}
-          </Text>
+          <View style={styles.deviceHeaderRow}>
+            {isSaved && (
+              <View
+                style={[
+                  styles.deviceStatusDot,
+                  isCurrentActive
+                    ? styles.statusDotConnected
+                    : isThisDeviceConnecting
+                    ? styles.statusDotConnecting
+                    : styles.statusDotOffline,
+                ]}
+              />
+            )}
+            <Text style={styles.deviceName} numberOfLines={1}>
+              {device.name}
+            </Text>
+          </View>
           <Text style={styles.deviceIp}>
-            {device.ipAddress} {device.model ? `• ${device.model}` : ''}
+            {device.ipAddress} {device.model ? `• ${device.model}` : ''}{' '}
+            {isSaved
+              ? `• ${
+                  isCurrentActive
+                    ? 'Connected'
+                    : isThisDeviceConnecting
+                    ? 'Connecting...'
+                    : 'Offline'
+                }`
+              : ''}
           </Text>
         </View>
 
@@ -206,7 +261,7 @@ export const TVDiscoveryScreen: React.FC = () => {
             {isPending ? (
               <ActivityIndicator size="small" color={theme.colors.textPrimary} />
             ) : (
-              <Text style={styles.actionButtonText}>{isSaved ? 'Reconnect' : 'Connect'}</Text>
+              <Text style={styles.actionButtonText}>Connect</Text>
             )}
           </TouchableOpacity>
         )}
@@ -596,10 +651,30 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: theme.spacing.sm,
   },
+  deviceHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  deviceStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusDotConnected: {
+    backgroundColor: '#30D158',
+  },
+  statusDotConnecting: {
+    backgroundColor: '#FFD60A',
+  },
+  statusDotOffline: {
+    backgroundColor: '#6B7280',
+  },
   deviceName: {
     ...theme.typography.subtitle,
     color: theme.colors.textPrimary,
-    marginBottom: 2,
+    marginBottom: 0,
   },
   deviceIp: {
     fontSize: 12,

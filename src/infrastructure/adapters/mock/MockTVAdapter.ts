@@ -110,6 +110,21 @@ export class MockTVAdapter
     this.setState(TVConnectionState.Error, error ?? new TVConnectionError('Connection lost'));
   }
 
+  heartbeatPaused = false;
+  checkLivenessResult = true;
+
+  pauseHeartbeat(): void {
+    this.heartbeatPaused = true;
+  }
+
+  resumeHeartbeat(): void {
+    this.heartbeatPaused = false;
+  }
+
+  async checkLiveness(): Promise<boolean> {
+    return this.checkLivenessResult;
+  }
+
   sendKey(key: RemoteKey) {
     return this.run('sendKey', [key]);
   }
@@ -151,6 +166,13 @@ export class MockTVAdapter
   }
   launchApp(appId: string) {
     return this.run('launchApp', [appId], 'appLaunching');
+  }
+  async getInstalledApps() {
+    return [
+      { id: 'youtube.leanback.v4', title: 'YouTube' },
+      { id: 'netflix', title: 'Netflix' },
+      { id: 'amazon', title: 'Amazon Prime Video' },
+    ];
   }
   openInput(inputId: string) {
     return this.run('openInput', [inputId], 'inputSwitching');

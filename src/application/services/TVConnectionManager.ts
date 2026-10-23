@@ -23,7 +23,13 @@ export interface ReconnectPolicy {
 }
 
 export interface TVConnectionManagerOptions {
+  /** Budget for reaching the TV and getting the pairing prompt / registration. */
   connectTimeoutMs?: number;
+  /**
+   * Budget once the TV is showing its on-screen authorization prompt. Must exceed the
+   * adapter's own pairing timeout so the adapter reports the precise error first.
+   */
+  pairingTimeoutMs?: number;
   reconnect?: Partial<ReconnectPolicy>;
   scheduler?: Scheduler;
 }
@@ -40,6 +46,8 @@ export type ConnectionListener = (snapshot: ConnectionSnapshot) => void;
 
 const DEFAULT_RECONNECT: ReconnectPolicy = { baseDelayMs: 1000, maxDelayMs: 30000, maxAttempts: 5 };
 const DEFAULT_CONNECT_TIMEOUT_MS = 15000;
+/** LGWebOSPairingService waits 60 s for the user; this adds a 5 s backstop. */
+const DEFAULT_PAIRING_TIMEOUT_MS = 65000;
 
 /**
  * Owns exactly one TV session at a time.
@@ -52,6 +60,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 15000;
 export class TVConnectionManager {
   private readonly scheduler: Scheduler;
   private readonly connectTimeoutMs: number;
+  private readonly pairingTimeoutMs: number;
   private readonly policy: ReconnectPolicy;
   private readonly listeners = new Set<ConnectionListener>();
 
@@ -64,6 +73,8 @@ export class TVConnectionManager {
   private generation = 0;
   private inFlight: Promise<void> | null = null;
   private cancelAttempt: ((error: Error) => void) | null = null;
+  /** Re-arms the current attempt's timeout (used when the pairing prompt appears). */
+  private extendTimeout: ((ms: number, message: string) => void) | null = null;
   private unsubscribeAdapter: (() => void) | null = null;
   private retryTimer: unknown = null;
   private retryCount = 0;
@@ -76,6 +87,7 @@ export class TVConnectionManager {
   ) {
     this.scheduler = options.scheduler ?? defaultScheduler;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+    this.pairingTimeoutMs = options.pairingTimeoutMs ?? DEFAULT_PAIRING_TIMEOUT_MS;
     this.policy = { ...DEFAULT_RECONNECT, ...options.reconnect };
   }
 
@@ -111,49 +123,67 @@ export class TVConnectionManager {
     return this.adapter;
   }
 
-  async connect(device: TVDevice): Promise<void> {
-    if (this.device?.id === device.id) {
-      if (this.state === TVConnectionState.Connected) {
-        return;
-      }
-      if (this.inFlight) {
-        return this.inFlight;
-      }
+  private targetDevice: TVDevice | null = null;
+
+  connect(device: TVDevice): Promise<void> {
+    if ((this.targetDevice?.id === device.id || this.device?.id === device.id) && this.inFlight) {
+      return this.inFlight;
+    }
+    if (this.device?.id === device.id && this.state === TVConnectionState.Connected) {
+      return Promise.resolve();
     }
 
+    this.targetDevice = device;
     const generation = this.beginOperation();
-    await this.teardown();
-    if (generation !== this.generation) {
-      throw new TVConnectionError('Connection superseded', 'cancelled');
-    }
-    this.device = device;
-    this.resetTo(TVConnectionState.Disconnected);
-    return this.startAttempt(device, generation, TVConnectionState.Connecting, false);
+    const connectPromise = (async () => {
+      try {
+        await this.teardown();
+        if (generation !== this.generation) {
+          throw new TVConnectionError('Connection superseded', 'cancelled');
+        }
+        this.device = device;
+        this.resetTo(TVConnectionState.Disconnected);
+        return await this.startAttempt(device, generation, TVConnectionState.Connecting, false);
+      } finally {
+        if (generation === this.generation) {
+          this.targetDevice = null;
+        }
+      }
+    })();
+
+    this.inFlight = connectPromise;
+    return connectPromise;
   }
 
   /** Manual reconnect to the last targeted device. */
-  async reconnect(): Promise<void> {
+  reconnect(): Promise<void> {
     if (!this.device) {
-      throw new TVConnectionError('No device to reconnect to', 'no_device');
+      return Promise.reject(new TVConnectionError('No device to reconnect to', 'no_device'));
     }
     if (this.state === TVConnectionState.Connected) {
-      return;
+      return Promise.resolve();
     }
     if (this.inFlight) {
       return this.inFlight;
     }
     const device = this.device;
     const generation = this.beginOperation();
-    await this.teardown();
-    if (generation !== this.generation) {
-      throw new TVConnectionError('Reconnect superseded', 'cancelled');
-    }
-    this.error = null;
-    return this.startAttempt(device, generation, TVConnectionState.Reconnecting, false);
+    const reconnectPromise = (async () => {
+      await this.teardown();
+      if (generation !== this.generation) {
+        throw new TVConnectionError('Reconnect superseded', 'cancelled');
+      }
+      this.error = null;
+      return this.startAttempt(device, generation, TVConnectionState.Reconnecting, false);
+    })();
+
+    this.inFlight = reconnectPromise;
+    return reconnectPromise;
   }
 
   async disconnect(): Promise<void> {
     this.beginOperation();
+    this.targetDevice = null;
     this.shouldRestore = false;
     await this.teardown();
     this.error = null;
@@ -161,22 +191,47 @@ export class TVConnectionManager {
   }
 
   /** Call when the app returns to the foreground. */
-  handleAppForeground(): void {
-    const idle =
-      this.state === TVConnectionState.Disconnected || this.state === TVConnectionState.Error;
-    if (this.shouldRestore && this.device && idle && !this.inFlight) {
+  async handleAppForeground(): Promise<void> {
+    if (this.state === TVConnectionState.Connected && this.adapter) {
+      try {
+        const isHealthy = (await this.adapter.checkLiveness?.()) ?? true;
+        if (isHealthy) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.log('[SmartRemote][AppState] Socket verified healthy upon returning to foreground');
+          }
+          this.adapter.resumeHeartbeat?.();
+          return;
+        }
+      } catch {
+        // Liveness check failed, fall through to reconnect
+      }
+    }
+
+    const needsReconnect =
+      this.state === TVConnectionState.Disconnected ||
+      this.state === TVConnectionState.Error ||
+      this.state === TVConnectionState.Reconnecting;
+    if (this.shouldRestore && this.device && needsReconnect && !this.inFlight) {
+      this.clearRetryTimer();
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log(`[SmartRemote][AppState] Foreground reconnecting to device ${this.device.id}`);
+      }
       this.reconnect().catch(() => undefined);
     }
   }
 
   /** Call when the app moves to the background: pending retries are dropped, session is released. */
   handleAppBackground(): void {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log('[SmartRemote][AppState] App moved to background');
+    }
     if (this.state === TVConnectionState.Reconnecting) {
       this.beginOperation();
       this.teardown().then(() => {
         this.setState(TVConnectionState.Disconnected);
       });
     }
+    this.adapter?.pauseHeartbeat?.();
   }
 
   // ---- internals ----
@@ -248,12 +303,21 @@ export class TVConnectionManager {
     const cancelled = new Promise<never>((_, reject) => {
       this.cancelAttempt = reject;
     });
+    let rejectTimeout: (error: Error) => void = () => undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = this.scheduler.setTimeout(
-        () => reject(new TVTimeoutError('Connecting to the TV timed out')),
-        this.connectTimeoutMs,
-      );
+      rejectTimeout = reject;
     });
+    // Local to this attempt so a stale attempt can never clear a newer attempt's timer.
+    const arm = (ms: number, message: string) => {
+      this.scheduler.clearTimeout(timer);
+      timer = this.scheduler.setTimeout(() => rejectTimeout(new TVTimeoutError(message)), ms);
+    };
+    arm(this.connectTimeoutMs, 'Connecting to the TV timed out');
+    this.extendTimeout = (ms, message) => {
+      if (generation === this.generation) {
+        arm(ms, message);
+      }
+    };
 
     try {
       await Promise.race([adapter.connect(device), timeout, cancelled]);
@@ -286,6 +350,7 @@ export class TVConnectionManager {
       this.scheduler.clearTimeout(timer);
       if (generation === this.generation) {
         this.cancelAttempt = null;
+        this.extendTimeout = null;
       }
     }
   }
@@ -299,6 +364,8 @@ export class TVConnectionManager {
         this.state === TVConnectionState.Connecting ||
         this.state === TVConnectionState.Reconnecting
       ) {
+        // The TV is waiting for the user: switch from the network budget to the pairing window.
+        this.extendTimeout?.(this.pairingTimeoutMs, 'Pairing was not accepted on the TV in time');
         this.setState(TVConnectionState.Pairing);
       }
       return;

@@ -1,6 +1,10 @@
 import { Scheduler } from '../../../application/services/TVConnectionManager';
 import { TVConnectionError, TVTimeoutError } from '../../../domain/errors/TVConnectionError';
-import { IWebSocketTransport, WebSocketFactory } from './WebSocketTransport';
+import {
+  sanitizeInboundSummary,
+  sanitizeOutboundSummary,
+} from '../../diagnostics/ConnectionDiagnostics';
+import { IWebSocketCloseEvent, IWebSocketTransport, WebSocketFactory } from './WebSocketTransport';
 
 /** Error reported by the TV for an SSAP request (`type: "error"` or `returnValue: false`). */
 export class LGWebOSRequestError extends Error {
@@ -94,7 +98,9 @@ export class LGWebOSWebSocketClient {
   private socket: IWebSocketTransport | null = null;
   private opened = false;
   private lastCloseError: Error | null = null;
-  private lastCloseEvent: { code?: number; reason?: string } | null = null;
+  private lastCloseEvent: IWebSocketCloseEvent | null = null;
+  private lastOutboundSummary: string | null = null;
+  private lastInboundSummary: string | null = null;
   private sequence = 0;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly messageListeners = new Set<SSAPMessageListener>();
@@ -117,8 +123,25 @@ export class LGWebOSWebSocketClient {
     return this.lastCloseError;
   }
 
-  getLastCloseEvent(): { code?: number; reason?: string } | null {
+  getLastCloseEvent(): IWebSocketCloseEvent | null {
     return this.lastCloseEvent;
+  }
+
+  getLastOutboundSummary(): string | null {
+    return this.lastOutboundSummary;
+  }
+
+  getLastInboundSummary(): string | null {
+    return this.lastInboundSummary;
+  }
+
+  async ping(): Promise<void> {
+    if (!this.opened || !this.socket) {
+      throw new TVConnectionError('SSAP socket is not open');
+    }
+    if (typeof this.socket.ping === 'function') {
+      await this.socket.ping();
+    }
   }
 
   open(url: string): Promise<void> {
@@ -187,16 +210,24 @@ export class LGWebOSWebSocketClient {
         }
         // After open, an error is always followed by onclose, which handles cleanup.
       };
-      socket.onclose = event => {
+      socket.onclose = (event: IWebSocketCloseEvent) => {
         const code = event?.code;
         const reason = event?.reason;
+        const domain = event?.domain;
+        const errorCode = event?.errorCode;
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(`[SmartRemote][WebSocket] Closed for ${url} (code: ${code}, reason: ${reason ?? 'none'})`);
+          console.log(
+            `[SmartRemote][WebSocket] Closed for ${url} (code: ${code}, reason: ${reason ?? 'none'}, domain: ${domain ?? 'none'}:${errorCode ?? 'none'})`,
+          );
         }
-        const detail = [code !== undefined ? `code: ${code}` : null, reason ? `reason: ${reason}` : null]
+        const detail = [
+          code !== undefined ? `code: ${code}` : null,
+          reason ? `reason: ${reason}` : null,
+          domain ? `domain: ${domain}:${errorCode}` : null,
+        ]
           .filter(Boolean)
           .join(', ');
-        this.lastCloseEvent = { code, reason };
+        this.lastCloseEvent = { code, reason, domain, errorCode };
 
         if (!settled) {
           const closeError = new TVConnectionError(
@@ -240,8 +271,10 @@ export class LGWebOSWebSocketClient {
         reject(new TVTimeoutError(`Request to ${uri} timed out`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
+      const frame = JSON.stringify({ type: 'request', id, uri, payload });
+      this.lastOutboundSummary = sanitizeOutboundSummary(frame);
       try {
-        this.socket?.send(JSON.stringify({ type: 'request', id, uri, payload }));
+        this.socket?.send(frame);
       } catch (e) {
         this.scheduler.clearTimeout(timer);
         this.pending.delete(id);
@@ -260,7 +293,9 @@ export class LGWebOSWebSocketClient {
         this.lastCloseError ?? undefined,
       );
     }
-    this.socket.send(JSON.stringify(message));
+    const frame = JSON.stringify(message);
+    this.lastOutboundSummary = sanitizeOutboundSummary(frame);
+    this.socket.send(frame);
   }
 
   onMessage(listener: SSAPMessageListener): () => void {
@@ -290,6 +325,7 @@ export class LGWebOSWebSocketClient {
   }
 
   private handleFrame(data: unknown): void {
+    this.lastInboundSummary = sanitizeInboundSummary(data);
     const message = parseSSAPMessage(data);
     if (!message) {
       return; // malformed frames are dropped

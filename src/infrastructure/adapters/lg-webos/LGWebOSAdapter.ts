@@ -1,4 +1,5 @@
 import { Scheduler } from '../../../application/services/TVConnectionManager';
+import { InstalledApp } from '../../../domain/entities/InstalledApp';
 import {
   createCapabilities,
   NO_CAPABILITIES,
@@ -11,7 +12,7 @@ import { TVConnectionState } from '../../../domain/enums/TVConnectionState';
 import { TVPlatform } from '../../../domain/enums/TVPlatform';
 import { TVProtocol } from '../../../domain/enums/TVProtocol';
 import { TVAuthorizationError } from '../../../domain/errors/TVAuthorizationError';
-import { TVConnectionError } from '../../../domain/errors/TVConnectionError';
+import { TVConnectionError, TVTimeoutError } from '../../../domain/errors/TVConnectionError';
 import { TVUnsupportedOperationError } from '../../../domain/errors/TVUnsupportedOperationError';
 import { ICredentialStorage } from '../../../domain/interfaces/ICredentialStorage';
 import {
@@ -36,6 +37,16 @@ import { LGWebOSPairingService } from './LGWebOSPairingService';
 import { LGWebOSPointerClient } from './LGWebOSPointerClient';
 import { LGWebOSRequestError, LGWebOSWebSocketClient } from './LGWebOSWebSocketClient';
 import { defaultWebSocketFactory, WebSocketFactory } from './WebSocketTransport';
+import { ConnectionDiagnosticsTracker } from '../../diagnostics/ConnectionDiagnostics';
+
+export const DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;
+export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 5000;
+export const MAX_CONSECUTIVE_HEARTBEAT_FAILURES = 2;
+
+const defaultScheduler: Scheduler = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
 
 export interface LGWebOSEndpoint {
   scheme: 'ws' | 'wss';
@@ -89,6 +100,12 @@ export class LGWebOSAdapter
   private host = '';
   /** Incremented on every connect/disconnect so stale async work can detect cancellation. */
   private attempt = 0;
+
+  private heartbeatTimer: unknown = null;
+  private heartbeatInFlight = false;
+  private consecutiveHeartbeatFailures = 0;
+  private isHeartbeatPaused = false;
+  private connectedTimestamp: number | null = null;
 
   constructor(private readonly deps: LGWebOSAdapterDependencies) {
     this.socketFactory = deps.webSocketFactory ?? defaultWebSocketFactory;
@@ -203,7 +220,9 @@ export class LGWebOSAdapter
         console.log(`[SmartRemote][Connect] Stage 5/5: Connected successfully to ${device.name} (${device.ipAddress})`);
       }
       this.capabilities = deriveCapabilities(services, pointerAvailable);
+      this.connectedTimestamp = Date.now();
       this.setState(TVConnectionState.Connected);
+      this.startHeartbeat(attempt);
     } catch (e) {
       const cancelled = attempt !== this.attempt;
       if (!cancelled) {
@@ -302,6 +321,29 @@ export class LGWebOSAdapter
   }
   async launchApp(appId: string) {
     return await this.execute(LGWebOSCommandMapper.launchApp(appId), 'launchApp', 'appLaunching');
+  }
+  async getInstalledApps(): Promise<InstalledApp[]> {
+    this.requireReady('getInstalledApps', 'appLaunching');
+    const res = await this.request(LGWebOSCommandMapper.listApps(), 'listApps');
+    const rawApps = res.apps;
+    if (!Array.isArray(rawApps)) {
+      return [];
+    }
+    const apps: InstalledApp[] = [];
+    for (const item of rawApps) {
+      if (typeof item === 'object' && item !== null) {
+        const a = item as Record<string, unknown>;
+        if (typeof a.id === 'string' && a.id.length > 0) {
+          apps.push({
+            id: a.id,
+            title: typeof a.title === 'string' ? a.title : a.id,
+            icon: typeof a.icon === 'string' ? a.icon : undefined,
+            systemApp: Boolean(a.systemApp),
+          });
+        }
+      }
+    }
+    return apps;
   }
   async openInput(inputId: string) {
     return await this.execute(LGWebOSCommandMapper.openInput(inputId), 'openInput', 'inputSwitching');
@@ -538,11 +580,172 @@ export class LGWebOSAdapter
     return error instanceof Error ? error : new TVConnectionError(`${operation} failed`);
   }
 
+  pauseHeartbeat(): void {
+    this.isHeartbeatPaused = true;
+    this.stopHeartbeatTimer();
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log('[SmartRemote][Heartbeat] Heartbeat paused for background state');
+    }
+  }
+
+  resumeHeartbeat(): void {
+    if (this.state === TVConnectionState.Connected && this.client) {
+      this.isHeartbeatPaused = false;
+      this.consecutiveHeartbeatFailures = 0;
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[SmartRemote][Heartbeat] Heartbeat resumed for active foreground state');
+      }
+      this.runHeartbeat(this.attempt).catch(() => undefined);
+    }
+  }
+
+  async checkLiveness(): Promise<boolean> {
+    if (this.state !== TVConnectionState.Connected || !this.client || !this.client.isOpen()) {
+      return false;
+    }
+    const client = this.client;
+    let timer: unknown;
+    try {
+      await Promise.race([
+        client.ping(),
+        new Promise((_, reject) => {
+          timer = (this.deps.scheduler ?? defaultScheduler).setTimeout(
+            () => reject(new TVTimeoutError('Liveness probe timed out')),
+            3000,
+          );
+        }),
+      ]);
+      (this.deps.scheduler ?? defaultScheduler).clearTimeout(timer);
+      return true;
+    } catch {
+      (this.deps.scheduler ?? defaultScheduler).clearTimeout(timer);
+      return false;
+    }
+  }
+
+  private startHeartbeat(attempt: number): void {
+    this.stopHeartbeat();
+    this.consecutiveHeartbeatFailures = 0;
+    this.isHeartbeatPaused = false;
+    this.scheduleNextHeartbeat(attempt);
+  }
+
+  private scheduleNextHeartbeat(attempt: number): void {
+    this.stopHeartbeatTimer();
+    if (
+      attempt !== this.attempt ||
+      this.isHeartbeatPaused ||
+      this.state !== TVConnectionState.Connected ||
+      !this.client
+    ) {
+      return;
+    }
+    const scheduler = this.deps.scheduler ?? defaultScheduler;
+    this.heartbeatTimer = scheduler.setTimeout(() => {
+      this.heartbeatTimer = null;
+      this.runHeartbeat(attempt).catch(() => undefined);
+    }, DEFAULT_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private async runHeartbeat(attempt: number): Promise<void> {
+    if (
+      attempt !== this.attempt ||
+      this.isHeartbeatPaused ||
+      this.state !== TVConnectionState.Connected ||
+      !this.client ||
+      this.heartbeatInFlight
+    ) {
+      return;
+    }
+
+    this.heartbeatInFlight = true;
+    const client = this.client;
+    const scheduler = this.deps.scheduler ?? defaultScheduler;
+    let timer: unknown;
+
+    try {
+      await Promise.race([
+        client.ping(),
+        new Promise((_, reject) => {
+          timer = scheduler.setTimeout(
+            () => reject(new TVTimeoutError('Heartbeat ping timed out')),
+            DEFAULT_HEARTBEAT_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      scheduler.clearTimeout(timer);
+      this.consecutiveHeartbeatFailures = 0;
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[SmartRemote][Heartbeat] Ping/Pong roundtrip acknowledged by TV');
+      }
+    } catch (e) {
+      scheduler.clearTimeout(timer);
+      this.consecutiveHeartbeatFailures += 1;
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(
+          `[SmartRemote][Heartbeat] Ping failure (${this.consecutiveHeartbeatFailures}/${MAX_CONSECUTIVE_HEARTBEAT_FAILURES}):`,
+          e,
+        );
+      }
+      if (this.consecutiveHeartbeatFailures >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.error(
+            `[SmartRemote][Heartbeat] TV missed ${this.consecutiveHeartbeatFailures} consecutive heartbeats; triggering disconnect`,
+          );
+        }
+        this.stopHeartbeat();
+        client.close();
+        return;
+      }
+    } finally {
+      this.heartbeatInFlight = false;
+      if (
+        attempt === this.attempt &&
+        !this.isHeartbeatPaused &&
+        this.state === TVConnectionState.Connected &&
+        this.client === client
+      ) {
+        this.scheduleNextHeartbeat(attempt);
+      }
+    }
+  }
+
+  private stopHeartbeatTimer(): void {
+    if (this.heartbeatTimer !== null) {
+      (this.deps.scheduler ?? defaultScheduler).clearTimeout(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private stopHeartbeat(): void {
+    this.stopHeartbeatTimer();
+    this.heartbeatInFlight = false;
+    this.consecutiveHeartbeatFailures = 0;
+  }
+
   private handleConnectionLost(client: LGWebOSWebSocketClient, error: Error): void {
     if (client !== this.client) {
       return;
     }
+    const closeEvent = client.getLastCloseEvent();
+    const now = Date.now();
+    ConnectionDiagnosticsTracker.getInstance().recordSession({
+      socketType: 'SSAP',
+      generation: this.attempt,
+      connectedAt: this.connectedTimestamp,
+      disconnectedAt: now,
+      durationMs: this.connectedTimestamp ? now - this.connectedTimestamp : null,
+      closeCode: closeEvent?.code ?? null,
+      closeReason: closeEvent?.reason ?? null,
+      errorDomain: closeEvent?.domain ?? null,
+      errorCode: closeEvent?.errorCode ?? null,
+      lastInbound: client.getLastInboundSummary(),
+      lastOutbound: client.getLastOutboundSummary(),
+      reconnectTrigger: error.message,
+    });
+
     if (this.state === TVConnectionState.Connected) {
+      this.stopHeartbeat();
       this.pointer?.close();
       this.pointer = null;
       this.client = null;
@@ -564,6 +767,8 @@ export class LGWebOSAdapter
   }
 
   private async teardown(): Promise<void> {
+    this.stopHeartbeat();
+    this.connectedTimestamp = null;
     this.pointer?.close();
     this.pointer = null;
     this.pointerOpening = null;

@@ -219,29 +219,28 @@ describe('RemoteScreen Component', () => {
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'home' });
   });
 
-  it('hides unsupported appLaunching and inputSwitching sections when TV reports unsupported', async () => {
+  it('preserves appLaunching and inputSwitching sections even when TV reports unsupported or is offline', async () => {
     const { container, render } = createTestEnv();
 
-    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
-    container.store.dispatch(
-      tvActions.capabilitiesChanged(
-        createCapabilities({
-          appLaunching: false,
-          inputSwitching: false,
-        }),
-      ),
-    );
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Disconnected));
+    container.store.dispatch(tvActions.capabilitiesChanged(null));
 
     let renderer: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(() => {
       renderer = render();
     });
 
-    const appSections = renderer!.root.findAllByProps({ testID: 'app-shortcuts-section' });
-    expect(appSections.length).toBe(0);
+    const appSection = renderer!.root.findByProps({ testID: 'app-shortcuts-section' });
+    expect(appSection).toBeDefined();
 
-    const inputSections = renderer!.root.findAllByProps({ testID: 'input-switching-section' });
-    expect(inputSections.length).toBe(0);
+    const inputSection = renderer!.root.findByProps({ testID: 'input-switching-section' });
+    expect(inputSection).toBeDefined();
+
+    const netflixBtn = renderer!.root.findByProps({ testID: 'btn-app-netflix' });
+    expect(netflixBtn).toBeDefined();
+
+    const hdmi1Btn = renderer!.root.findByProps({ testID: 'btn-input-HDMI_1' });
+    expect(hdmi1Btn).toBeDefined();
   });
 
   it('shows app launching and input switching when capabilities are supported', async () => {
@@ -309,7 +308,7 @@ describe('RemoteScreen Component', () => {
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'powerOff' });
   });
 
-  it('switches between buttons, touchpad, and numbers modes', async () => {
+  it('switches between buttons, touchpad, and motion modes, preserving NumericKeypad inside Buttons mode', async () => {
     const { container, render } = createTestEnv();
 
     container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
@@ -319,10 +318,10 @@ describe('RemoteScreen Component', () => {
       renderer = render();
     });
 
-    // Initially in Buttons mode: D-Pad is mounted, Touchpad and Keypad are not
+    // Initially in Buttons mode: D-Pad and NumericKeypad are mounted, Touchpad is not
     expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBeGreaterThan(0);
     expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBe(0);
-    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBe(0);
 
     // Switch to Touchpad mode
     const touchpadModeBtn = renderer!.root.findByProps({ testID: 'tab-touchpad' });
@@ -335,14 +334,14 @@ describe('RemoteScreen Component', () => {
     expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
     expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBe(0);
 
-    // Switch to Numbers mode
-    const numbersModeBtn = renderer!.root.findByProps({ testID: 'tab-numbers' });
+    // Switch to Motion mode
+    const motionModeBtn = renderer!.root.findByProps({ testID: 'tab-motion' });
     await ReactTestRenderer.act(() => {
-      numbersModeBtn.props.onPress();
+      motionModeBtn.props.onPress();
     });
 
-    // NumericKeypad is now mounted; D-Pad and Touchpad are unmounted
-    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBeGreaterThan(0);
+    // Motion surface is now mounted; D-Pad and Keypad are unmounted
+    expect(renderer!.root.findAllByProps({ testID: 'motion-surface' }).length).toBeGreaterThan(0);
     expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
     expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBe(0);
 
@@ -352,7 +351,7 @@ describe('RemoteScreen Component', () => {
       buttonsModeBtn.props.onPress();
     });
     expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBeGreaterThan(0);
-    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBe(0);
+    expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBeGreaterThan(0);
   });
 
   it('disables ScrollView scrolling while Touchpad gesture is active and restores it upon release', async () => {
@@ -532,7 +531,7 @@ describe('RemoteScreen Component', () => {
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'channelUp' });
   });
 
-  it('keeps volume, channel, power, home, and back controls accessible in Numbers mode', async () => {
+  it('keeps volume, channel, power, home, and back controls accessible alongside NumericKeypad in Buttons mode', async () => {
     const { container, render } = createTestEnv({
       volumeControl: true,
       channelControl: true,
@@ -559,19 +558,11 @@ describe('RemoteScreen Component', () => {
       renderer = render();
     });
 
-    // Switch to Numbers mode
-    const numbersModeBtn = renderer!.root.findByProps({ testID: 'tab-numbers' });
-    await ReactTestRenderer.act(() => {
-      numbersModeBtn.props.onPress();
-    });
-
-    // NumericKeypad is mounted
+    // In Buttons mode: NumericKeypad and D-pad are both mounted
     expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBeGreaterThan(0);
 
-    // Directional D-pad should NOT be mounted in Numbers mode
-    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
-
-    // Common controls (Power, Home, Back, Vol+, Vol-, Ch+, Ch-) MUST still be mounted and functional
+    // Common controls (Power, Home, Back, Vol+, Vol-, Ch+, Ch-) MUST be mounted and functional
     const powerBtn = renderer!.root.findByProps({ testID: 'btn-power' });
     await ReactTestRenderer.act(() => {
       powerBtn.props.onPress();
@@ -620,10 +611,9 @@ describe('RemoteScreen Component', () => {
       renderer = render();
     });
 
-    // Verify all 4 tabs exist
+    // Verify all 3 mode selector tabs exist
     expect(renderer!.root.findByProps({ testID: 'tab-buttons' })).toBeDefined();
     expect(renderer!.root.findByProps({ testID: 'tab-touchpad' })).toBeDefined();
-    expect(renderer!.root.findByProps({ testID: 'tab-numbers' })).toBeDefined();
     expect(renderer!.root.findByProps({ testID: 'tab-motion' })).toBeDefined();
 
     // Switch to Motion mode

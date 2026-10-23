@@ -37,11 +37,11 @@ describe('TVDiscoveryScreen Component', () => {
     model: 'OLED55G2',
   });
 
-  let activeCleanup: (() => Promise<void>) | null = null;
+  const activeCleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
-    if (activeCleanup) {
-      await activeCleanup();
-      activeCleanup = null;
+    while (activeCleanups.length > 0) {
+      const c = activeCleanups.pop();
+      if (c) await c();
     }
   });
 
@@ -72,10 +72,11 @@ describe('TVDiscoveryScreen Component', () => {
       if (currentRenderer) {
         await ReactTestRenderer.act(() => {
           currentRenderer?.unmount();
+          currentRenderer = null;
         });
       }
     };
-    activeCleanup = cleanup;
+    activeCleanups.push(cleanup);
 
     return { container, mockAdapter, render, cleanup };
   };
