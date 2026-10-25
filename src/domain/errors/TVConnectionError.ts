@@ -1,4 +1,13 @@
-export type TVConnectionErrorCode = 'connection_failed' | 'timeout' | 'cancelled' | 'no_device';
+export type TVConnectionErrorCode =
+  | 'connection_failed'
+  | 'timeout'
+  | 'cancelled'
+  | 'no_device'
+  | 'invalid_mac'
+  | 'missing_mac'
+  | 'not_found'
+  | 'unsupported_platform'
+  | 'wol_failed';
 
 export class TVConnectionError extends Error {
   readonly code: TVConnectionErrorCode;

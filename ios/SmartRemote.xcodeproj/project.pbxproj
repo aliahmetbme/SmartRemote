@@ -18,6 +18,8 @@
 		A1B2C3D42CA4567400665405 /* LGWebSocketSecurityPolicy.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D42CA4567400665406 /* LGWebSocketSecurityPolicy.m */; };
 		B1B2C3D42CA4567400665403 /* MotionSensorModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D42CA4567400665401 /* MotionSensorModule.swift */; };
 		B1B2C3D42CA4567400665404 /* MotionSensorModuleBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = B1B2C3D42CA4567400665402 /* MotionSensorModuleBridge.m */; };
+		C1B2C3D42CA4567400665403 /* WakeOnLanModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B2C3D42CA4567400665401 /* WakeOnLanModule.swift */; };
+		C1B2C3D42CA4567400665404 /* WakeOnLanModuleBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = C1B2C3D42CA4567400665402 /* WakeOnLanModuleBridge.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +39,8 @@
 		A1B2C3D42CA4567400665407 /* LGWebSocketSecurityPolicy.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = LGWebSocketSecurityPolicy.h; path = SmartRemote/LGWebSocketSecurityPolicy.h; sourceTree = "<group>"; };
 		B1B2C3D42CA4567400665401 /* MotionSensorModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MotionSensorModule.swift; path = SmartRemote/MotionSensorModule.swift; sourceTree = "<group>"; };
 		B1B2C3D42CA4567400665402 /* MotionSensorModuleBridge.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = MotionSensorModuleBridge.m; path = SmartRemote/MotionSensorModuleBridge.m; sourceTree = "<group>"; };
+		C1B2C3D42CA4567400665401 /* WakeOnLanModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WakeOnLanModule.swift; path = SmartRemote/WakeOnLanModule.swift; sourceTree = "<group>"; };
+		C1B2C3D42CA4567400665402 /* WakeOnLanModuleBridge.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = WakeOnLanModuleBridge.m; path = SmartRemote/WakeOnLanModuleBridge.m; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -67,6 +71,8 @@
 				A1B2C3D42CA4567400665406 /* LGWebSocketSecurityPolicy.m */,
 				B1B2C3D42CA4567400665401 /* MotionSensorModule.swift */,
 				B1B2C3D42CA4567400665402 /* MotionSensorModuleBridge.m */,
+				C1B2C3D42CA4567400665401 /* WakeOnLanModule.swift */,
+				C1B2C3D42CA4567400665402 /* WakeOnLanModuleBridge.m */,
 			);
 			name = SmartRemote;
 			sourceTree = "<group>";
@@ -283,6 +289,8 @@
 				A1B2C3D42CA4567400665405 /* LGWebSocketSecurityPolicy.m in Sources */,
 				B1B2C3D42CA4567400665403 /* MotionSensorModule.swift in Sources */,
 				B1B2C3D42CA4567400665404 /* MotionSensorModuleBridge.m in Sources */,
+				C1B2C3D42CA4567400665403 /* WakeOnLanModule.swift in Sources */,
+				C1B2C3D42CA4567400665404 /* WakeOnLanModuleBridge.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

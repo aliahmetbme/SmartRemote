@@ -1,4 +1,5 @@
 import { Scheduler } from '../../../domain/interfaces/IScheduler';
+import { canonicalizeMacAddress, isValidMacAddress } from '../../../domain/utils/macValidator';
 import { InstalledApp } from '../../../domain/entities/InstalledApp';
 import {
   createCapabilities,
@@ -104,6 +105,7 @@ export class LGWebOSAdapter
   private pointerOpening: Promise<LGWebOSPointerClient> | null = null;
   private lastPointerFailureTime: number = 0;
   private host = '';
+  private discoveredMac: string | null = null;
   /** Incremented on every connect/disconnect so stale async work can detect cancellation. */
   private attempt = 0;
 
@@ -218,6 +220,14 @@ export class LGWebOSAdapter
       }
       const services = await this.fetchServices(client);
       this.assertCurrent(attempt);
+      const networkMac = await this.fetchNetworkMac(client, device.ipAddress);
+      this.assertCurrent(attempt);
+      if (networkMac) {
+        this.discoveredMac = networkMac;
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log(`[SmartRemote][Connect] Discovered verified TV MAC address: ${networkMac}`);
+        }
+      }
       const pointerAvailable = await this.tryOpenPointer(client);
       this.assertCurrent(attempt);
 
@@ -251,6 +261,10 @@ export class LGWebOSAdapter
 
   getCapabilities(): TVCapabilities {
     return this.capabilities;
+  }
+
+  getDiscoveredMac(): string | null {
+    return this.discoveredMac;
   }
 
   onConnectionStateChange(listener: ConnectionStateListener): Unsubscribe {
@@ -440,6 +454,56 @@ export class LGWebOSAdapter
       if (!client.isOpen()) throw e; // connection died; not a "feature missing" case
       return null;
     }
+  }
+
+  private async fetchNetworkMac(
+    client: LGWebOSWebSocketClient,
+    targetIp: string,
+  ): Promise<string | null> {
+    try {
+      const res = await client.request(
+        'ssap://com.webos.service.connectionmanager/getinfo',
+        undefined,
+        1500,
+      );
+      const wifi = res.wifi as Record<string, unknown> | undefined;
+      const wired = res.wired as Record<string, unknown> | undefined;
+
+      // 1. Prefer interface matching target IP
+      if (wired && wired.ipAddress === targetIp && typeof wired.macAddress === 'string') {
+        if (isValidMacAddress(wired.macAddress)) {
+          return canonicalizeMacAddress(wired.macAddress);
+        }
+      }
+      if (wifi && wifi.ipAddress === targetIp && typeof wifi.macAddress === 'string') {
+        if (isValidMacAddress(wifi.macAddress)) {
+          return canonicalizeMacAddress(wifi.macAddress);
+        }
+      }
+
+      // 2. Fallback: check active interface
+      if (
+        wired &&
+        (wired.state === 'connected' || wired.onInternet === 'yes') &&
+        typeof wired.macAddress === 'string'
+      ) {
+        if (isValidMacAddress(wired.macAddress)) {
+          return canonicalizeMacAddress(wired.macAddress);
+        }
+      }
+      if (
+        wifi &&
+        (wifi.state === 'connected' || wifi.onInternet === 'yes') &&
+        typeof wifi.macAddress === 'string'
+      ) {
+        if (isValidMacAddress(wifi.macAddress)) {
+          return canonicalizeMacAddress(wifi.macAddress);
+        }
+      }
+    } catch {
+      // Best-effort; endpoint may not be supported or permitted on some webOS firmware
+    }
+    return null;
   }
 
   private async tryOpenPointer(client: LGWebOSWebSocketClient): Promise<boolean> {

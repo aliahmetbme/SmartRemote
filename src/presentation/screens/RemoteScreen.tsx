@@ -30,9 +30,13 @@ import { theme } from '../theme';
 
 interface RemoteScreenProps {
   onNavigateToDiscovery?: () => void;
+  onNavigateToSettings?: () => void;
 }
 
-export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscovery }) => {
+export const RemoteScreen: React.FC<RemoteScreenProps> = ({
+  onNavigateToDiscovery,
+  onNavigateToSettings,
+}) => {
   const container = useContainer();
   const insets = useSafeAreaInsets();
 
@@ -45,6 +49,8 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
   const [isTouchpadActive, setIsTouchpadActive] = useState<boolean>(false);
   const [isMotionActive, setIsMotionActive] = useState<boolean>(false);
   const [launchingAppId, setLaunchingAppId] = useState<string | null>(null);
+  const [isWaking, setIsWaking] = useState<boolean>(false);
+  const [wakeStatusText, setWakeStatusText] = useState<string | null>(null);
 
   const managerDevice = container.connectionManager.getDevice();
   const activeDevice =
@@ -114,30 +120,36 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
     let color: string = theme.colors.disconnected;
     let showSpinner = false;
 
-    switch (connectionStatus) {
-      case TVConnectionState.Connected:
-        text = 'Connected';
-        color = theme.colors.connected;
-        break;
-      case TVConnectionState.Connecting:
-        text = 'Connecting...';
-        color = theme.colors.connecting;
-        showSpinner = true;
-        break;
-      case TVConnectionState.Pairing:
-        text = 'Pairing...';
-        color = theme.colors.pairing;
-        showSpinner = true;
-        break;
-      case TVConnectionState.Reconnecting:
-        text = 'Reconnecting...';
-        color = theme.colors.connecting;
-        showSpinner = true;
-        break;
-      case TVConnectionState.Error:
-        text = 'Offline / Error';
-        color = theme.colors.error;
-        break;
+    if (isWaking) {
+      text = wakeStatusText ?? 'Waking TV...';
+      color = theme.colors.connecting;
+      showSpinner = true;
+    } else {
+      switch (connectionStatus) {
+        case TVConnectionState.Connected:
+          text = 'Connected';
+          color = theme.colors.connected;
+          break;
+        case TVConnectionState.Connecting:
+          text = 'Connecting...';
+          color = theme.colors.connecting;
+          showSpinner = true;
+          break;
+        case TVConnectionState.Pairing:
+          text = 'Pairing...';
+          color = theme.colors.pairing;
+          showSpinner = true;
+          break;
+        case TVConnectionState.Reconnecting:
+          text = 'Reconnecting...';
+          color = theme.colors.connecting;
+          showSpinner = true;
+          break;
+        case TVConnectionState.Error:
+          text = 'Offline / Error';
+          color = theme.colors.error;
+          break;
+      }
     }
 
     return (
@@ -150,6 +162,70 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
         <Text style={[styles.statusText, { color }]}>{text}</Text>
       </View>
     );
+  };
+
+  const isTransitioning =
+    connectionStatus === TVConnectionState.Connecting ||
+    connectionStatus === TVConnectionState.Reconnecting ||
+    connectionStatus === TVConnectionState.Pairing;
+
+  const handlePowerPress = async () => {
+    if (isConnected) {
+      handleCommand(
+        () => container.useCases.sendRemoteCommand.execute({ type: 'powerOff' }),
+        'powerOff',
+      );
+      return;
+    }
+
+    if (isTransitioning || isWaking) {
+      return;
+    }
+
+    if (!activeDevice) {
+      Alert.alert('No TV Selected', 'Please select a TV first.');
+      return;
+    }
+
+    if (!activeDevice.macAddress) {
+      Alert.alert(
+        'MAC Address Required',
+        "To turn on your TV from standby using Wake-on-LAN, SmartRemote needs your TV's MAC address.\n\nYou can enter it in Settings, or connect while the TV is on to detect it automatically.",
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Go to Settings',
+            onPress: () => onNavigateToSettings?.(),
+          },
+        ],
+      );
+      return;
+    }
+
+    setIsWaking(true);
+    setWakeStatusText('Sending Wake packet...');
+    try {
+      const result = await container.useCases.wakeTV.execute(activeDevice, {
+        onProgress: stage => {
+          if (stage === 'sending') setWakeStatusText('Sending Wake packet...');
+          if (stage === 'waiting') setWakeStatusText('Waiting for TV to boot...');
+          if (stage === 'connecting') setWakeStatusText('Connecting to TV...');
+        },
+      });
+
+      if (!result.success && result.error) {
+        Alert.alert(
+          'Wake-on-LAN',
+          `Could not connect to the TV after sending Wake-on-LAN.\n\nPlease verify that "TV On With Mobile" or "Turn On via Wi-Fi" is enabled in your LG TV's settings.`,
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Wake-on-LAN failed';
+      Alert.alert('Wake Failed', msg);
+    } finally {
+      setIsWaking(false);
+      setWakeStatusText(null);
+    }
   };
 
   const handleTabChange = (tab: RemoteMode) => {
@@ -207,20 +283,23 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({ onNavigateToDiscover
           <TouchableOpacity
             style={[
               styles.powerButton,
-              (!isConnected || !isCapable('powerOff')) && styles.controlDisabled,
+              !isConnected && activeDevice?.macAddress && styles.powerButtonWake,
+              (isTransitioning || isWaking) && styles.controlDisabled,
             ]}
-            disabled={!isConnected || !isCapable('powerOff')}
-            onPress={() =>
-              handleCommand(
-                () => container.useCases.sendRemoteCommand.execute({ type: 'powerOff' }),
-                'powerOff',
-              )
-            }
+            disabled={isTransitioning || isWaking}
+            onPress={handlePowerPress}
             testID="btn-power"
-            accessibilityLabel="Power Off"
+            accessibilityLabel={isConnected ? 'Power Off' : 'Power On (Wake-on-LAN)'}
             accessibilityRole="button"
           >
-            <Text style={styles.powerIcon}>⏻</Text>
+            <Text
+              style={[
+                styles.powerIcon,
+                !isConnected && activeDevice?.macAddress && styles.powerIconWake,
+              ]}
+            >
+              ⏻
+            </Text>
           </TouchableOpacity>
 
           {/* Home Button */}
@@ -576,10 +655,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  powerButtonWake: {
+    backgroundColor: '#142618',
+    borderColor: '#1F4725',
+  },
   powerIcon: {
     fontSize: 22,
     color: '#FF453A',
     fontWeight: 'bold',
+  },
+  powerIconWake: {
+    color: '#30D158',
   },
   circleButton: {
     width: 58,

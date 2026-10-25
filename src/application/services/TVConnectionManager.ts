@@ -358,6 +358,13 @@ export class TVConnectionManager {
         throw new TVConnectionError('Connection cancelled', 'cancelled');
       }
       this.capabilities = adapter.getCapabilities();
+      const detectedMac = (adapter as { getDiscoveredMac?: () => string | null }).getDiscoveredMac?.();
+      if (detectedMac && (!this.device?.macAddress || this.device.macAddress !== detectedMac)) {
+        this.device = {
+          ...(this.device ?? device),
+          macAddress: detectedMac,
+        };
+      }
       this.shouldRestore = true;
       this.retryCount = 0;
       this.error = null;

@@ -71,7 +71,7 @@ describe('RemoteScreen Component', () => {
     expect(volUp.props.disabled).toBe(true);
 
     const powerBtn = renderer!.root.findByProps({ testID: 'btn-power' });
-    expect(powerBtn.props.disabled).toBe(true);
+    expect(powerBtn.props.disabled).toBe(false);
   });
 
   it('dispatches directional navigation and central OK commands when connected', async () => {

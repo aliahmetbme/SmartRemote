@@ -64,7 +64,10 @@ interface RemoteWrapperProps {
 }
 
 const RemoteScreenWrapper: React.FC<RemoteWrapperProps> = ({ navigation }) => (
-  <RemoteScreen onNavigateToDiscovery={() => navigation.navigate('Discovery')} />
+  <RemoteScreen
+    onNavigateToDiscovery={() => navigation.navigate('Discovery')}
+    onNavigateToSettings={() => navigation.navigate('Settings')}
+  />
 );
 
 const remoteOptions = { tabBarIcon: renderRemoteIcon };

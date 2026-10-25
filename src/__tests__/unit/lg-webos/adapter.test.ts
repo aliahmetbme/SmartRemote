@@ -278,7 +278,7 @@ describe('LGWebOSAdapter commands', () => {
     await adapter.openInput('HDMI_2');
     await adapter.sendText('abc');
     await adapter.sendKey(RemoteKey.VolumeUp);
-    const sent = server.requests.map(r => r.uri).filter(u => !u.includes('getServiceList') && !u.includes('getPointer'));
+    const sent = server.requests.map(r => r.uri).filter(u => !u.includes('getServiceList') && !u.includes('getPointer') && !u.includes('connectionmanager'));
     expect(sent).toEqual([
       'ssap://audio/volumeUp',
       'ssap://audio/volumeDown',

@@ -66,6 +66,16 @@ class ControlledWebSocketTransport implements IWebSocketTransport {
             error: '404',
           });
         });
+      } else if (parsed.uri === 'ssap://com.webos.service.connectionmanager/getinfo') {
+        Promise.resolve().then(() => {
+          this.simulateMessage({
+            type: 'response',
+            id: parsed.id,
+            payload: {
+              wifi: { ipAddress: '192.168.1.120', macAddress: 'AA:BB:CC:DD:EE:FF', state: 'connected' },
+            },
+          });
+        });
       }
     } catch {
       // non-json frame

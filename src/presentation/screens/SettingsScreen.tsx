@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
@@ -17,6 +18,7 @@ import {
 } from '../../store/selectors';
 import { tvActions } from '../../store/slices/tvSlice';
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
+import { isValidMacAddress } from '../../domain/utils/macValidator';
 import { useContainer } from '../context/ContainerContext';
 import { theme } from '../theme';
 
@@ -30,11 +32,20 @@ export const SettingsScreen: React.FC = () => {
   const connectionStatus = useAppSelector(selectConnectionStatus);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isEditingMac, setIsEditingMac] = useState<boolean>(false);
+  const [macInput, setMacInput] = useState<string>('');
+  const [isTestingWake, setIsTestingWake] = useState<boolean>(false);
   const managerDevice = container.connectionManager.getDevice();
   const activeDevice =
     savedDevices.find(d => d.id === activeDeviceId) ??
     (managerDevice ? { ...managerDevice } : null) ??
     (savedDevices.length > 0 ? savedDevices[0] : null);
+
+  useEffect(() => {
+    if (activeDevice?.macAddress) {
+      setMacInput(activeDevice.macAddress);
+    }
+  }, [activeDevice?.macAddress]);
 
   if (typeof __DEV__ !== 'undefined' && __DEV__) {
     console.log(
@@ -123,6 +134,55 @@ export const SettingsScreen: React.FC = () => {
     }
   };
 
+  const handleSaveMac = async () => {
+    if (!activeDevice) return;
+    const trimmed = macInput.trim();
+    if (!isValidMacAddress(trimmed)) {
+      Alert.alert(
+        'Invalid MAC Address',
+        'Please enter a valid 12-digit hexadecimal MAC address (e.g. AA:BB:CC:DD:EE:FF or AA-BB-CC-DD-EE-FF).',
+      );
+      return;
+    }
+    try {
+      const updated = await container.useCases.updateTVMac.execute(activeDevice.id, trimmed);
+      dispatch(tvActions.deviceSaved(updated));
+      setIsEditingMac(false);
+      Alert.alert('MAC Address Saved', `Updated MAC address for "${updated.name}" to ${updated.macAddress}.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update MAC address';
+      Alert.alert('Error', msg);
+    }
+  };
+
+  const handleTestWake = async () => {
+    if (!activeDevice) return;
+    if (!activeDevice.macAddress) {
+      Alert.alert('MAC Required', 'Please configure and save a MAC address for this TV first.');
+      return;
+    }
+    setIsTestingWake(true);
+    try {
+      const result = await container.useCases.wakeTV.execute(activeDevice, {
+        wakeTimeoutMs: 15000,
+        probeIntervalMs: 1500,
+      });
+      if (result.success) {
+        Alert.alert('Wake Successful', `TV responded and connected successfully! Sent ${result.packetsSent} packet(s).`);
+      } else {
+        Alert.alert(
+          'Wake-on-LAN Sent',
+          `Magic packet transmitted (${result.packetsSent} packets sent to ${result.destinations.join(', ')}).\n\nIf the TV did not power on, verify that "TV On With Mobile" or "Turn On via Wi-Fi" is enabled in your TV's settings.`,
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Wake-on-LAN test failed';
+      Alert.alert('Test Wake Failed', msg);
+    } finally {
+      setIsTestingWake(false);
+    }
+  };
+
   return (
     <ScrollView
       style={styles.container}
@@ -190,6 +250,116 @@ export const SettingsScreen: React.FC = () => {
         )}
       </View>
 
+      {/* Wake-on-LAN Configuration Card */}
+      {activeDevice && (
+        <View style={styles.card} testID="settings-wol-card">
+          <Text style={styles.cardHeader}>Wake-on-LAN (Power On from Standby)</Text>
+          <View style={styles.infoBlock}>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>TV Target:</Text>
+              <Text style={styles.infoValue}>{activeDevice.name}</Text>
+            </View>
+
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>MAC Address:</Text>
+              <Text
+                style={[
+                  styles.infoValue,
+                  !activeDevice.macAddress && styles.infoValueMuted,
+                ]}
+                testID="settings-mac-display"
+              >
+                {activeDevice.macAddress ? activeDevice.macAddress : 'Not configured'}
+              </Text>
+            </View>
+
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>Wake Capability:</Text>
+              <Text
+                style={[
+                  styles.infoValue,
+                  {
+                    color: activeDevice.macAddress ? theme.colors.connected : theme.colors.error,
+                  },
+                ]}
+              >
+                {activeDevice.macAddress ? 'Ready (WoL Enabled)' : 'Requires MAC'}
+              </Text>
+            </View>
+
+            {isEditingMac ? (
+              <View style={styles.macEditContainer}>
+                <Text style={styles.macInputLabel}>Enter TV MAC Address:</Text>
+                <TextInput
+                  style={styles.macTextInput}
+                  value={macInput}
+                  onChangeText={setMacInput}
+                  placeholder="e.g. AA:BB:CC:DD:EE:FF"
+                  placeholderTextColor={theme.colors.textMuted}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  testID="settings-mac-input"
+                />
+                <View style={styles.macEditButtonRow}>
+                  <TouchableOpacity
+                    style={styles.cancelMacButton}
+                    onPress={() => {
+                      setMacInput(activeDevice.macAddress ?? '');
+                      setIsEditingMac(false);
+                    }}
+                    testID="cancel-mac-btn"
+                  >
+                    <Text style={styles.cancelMacText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.saveMacButton}
+                    onPress={handleSaveMac}
+                    testID="save-mac-btn"
+                  >
+                    <Text style={styles.saveMacText}>Save MAC</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.wolButtonRow}>
+                <TouchableOpacity
+                  style={styles.editMacButton}
+                  onPress={() => {
+                    setMacInput(activeDevice.macAddress ?? '');
+                    setIsEditingMac(true);
+                  }}
+                  testID="edit-mac-btn"
+                >
+                  <Text style={styles.editMacButtonText}>
+                    {activeDevice.macAddress ? 'Edit MAC' : 'Configure MAC'}
+                  </Text>
+                </TouchableOpacity>
+
+                {Boolean(activeDevice.macAddress) && (
+                  <TouchableOpacity
+                    style={[styles.testWakeButton, isTestingWake && styles.controlDisabled]}
+                    disabled={isTestingWake}
+                    onPress={handleTestWake}
+                    testID="test-wake-btn"
+                  >
+                    <Text style={styles.testWakeButtonText}>
+                      {isTestingWake ? 'Sending WoL...' : 'Test Wake'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            <Text style={styles.wolNoticeTitle}>LG TV Standby Settings:</Text>
+            <Text style={styles.wolNoticeBody}>
+              To allow SmartRemote to power on your TV from standby:{"\n"}
+              1. On your LG TV, open Settings &gt; General &gt; Devices &gt; External Devices &gt; TV On With Mobile.{"\n"}
+              2. Turn ON &quot;Turn on via Wi-Fi&quot; (or Ethernet if wired).
+            </Text>
+          </View>
+        </View>
+      )}
+
       {/* Saved Devices Management */}
       <View style={styles.card}>
         <Text style={styles.cardHeader}>Saved TV Devices ({savedDevices.length})</Text>
@@ -226,7 +396,8 @@ export const SettingsScreen: React.FC = () => {
                     <Text style={styles.savedItemName}>{device.name}</Text>
                   </View>
                   <Text style={styles.savedItemSub}>
-                    {device.ipAddress} •{' '}
+                    {device.ipAddress}
+                    {device.macAddress ? ` • MAC: ${device.macAddress}` : ''} •{' '}
                     {isDeviceConnected
                       ? 'Connected'
                       : isDeviceConnecting
@@ -334,6 +505,10 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
     fontWeight: '600',
   },
+  infoValueMuted: {
+    color: theme.colors.textMuted,
+    fontStyle: 'italic',
+  },
   emptyText: {
     ...theme.typography.body,
     color: theme.colors.textMuted,
@@ -367,6 +542,104 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: theme.colors.secondary,
     fontWeight: '700',
+  },
+  wolButtonRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.md,
+  },
+  editMacButton: {
+    flex: 1,
+    backgroundColor: '#1C2232',
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#2B354C',
+    alignItems: 'center',
+  },
+  editMacButtonText: {
+    ...theme.typography.caption,
+    color: theme.colors.textPrimary,
+    fontWeight: '700',
+  },
+  testWakeButton: {
+    flex: 1,
+    backgroundColor: 'rgba(48, 209, 88, 0.15)',
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#30D158',
+    alignItems: 'center',
+  },
+  testWakeButtonText: {
+    ...theme.typography.caption,
+    color: '#30D158',
+    fontWeight: '700',
+  },
+  controlDisabled: {
+    opacity: 0.5,
+  },
+  macEditContainer: {
+    marginTop: theme.spacing.md,
+    padding: theme.spacing.sm,
+    backgroundColor: '#0F131D',
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#2B354C',
+  },
+  macInputLabel: {
+    ...theme.typography.caption,
+    color: theme.colors.textMuted,
+    marginBottom: 6,
+  },
+  macTextInput: {
+    backgroundColor: '#1C2232',
+    color: theme.colors.textPrimary,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 8,
+    fontSize: 14,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginBottom: theme.spacing.sm,
+  },
+  macEditButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: theme.spacing.sm,
+  },
+  cancelMacButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: theme.borderRadius.sm,
+  },
+  cancelMacText: {
+    ...theme.typography.caption,
+    color: theme.colors.textMuted,
+  },
+  saveMacButton: {
+    backgroundColor: theme.colors.secondary,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: theme.borderRadius.sm,
+  },
+  saveMacText: {
+    ...theme.typography.caption,
+    color: '#000',
+    fontWeight: '700',
+  },
+  wolNoticeTitle: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    fontWeight: '700',
+    marginTop: theme.spacing.md,
+    marginBottom: 4,
+  },
+  wolNoticeBody: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: theme.colors.textMuted,
   },
   savedItemRow: {
     flexDirection: 'row',

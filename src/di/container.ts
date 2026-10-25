@@ -12,11 +12,15 @@ import { RestoreLastTVUseCase } from '../application/usecases/RestoreLastTVUseCa
 import { SendRemoteCommandUseCase } from '../application/usecases/SendRemoteCommandUseCase';
 import { GetInstalledAppsUseCase } from '../application/usecases/GetInstalledAppsUseCase';
 import { StartupRestorationUseCase } from '../application/usecases/StartupRestorationUseCase';
+import { WakeTVUseCase } from '../application/usecases/WakeTVUseCase';
+import { UpdateTVMacUseCase } from '../application/usecases/UpdateTVMacUseCase';
 import { tvActions } from '../store/slices/tvSlice';
 import { ICredentialStorage } from '../domain/interfaces/ICredentialStorage';
 import { ITVAdapterFactory } from '../domain/interfaces/ITVAdapterFactory';
 import { ITVDeviceRepository } from '../domain/interfaces/ITVDeviceRepository';
 import { ITVDiscoveryService } from '../domain/interfaces/ITVDiscoveryService';
+import { ITVWakeService } from '../domain/interfaces/ITVWakeService';
+import { WakeOnLanService } from '../infrastructure/services/WakeOnLanService';
 import { LGWebOSSSDPDiscoveryStrategy } from '../infrastructure/discovery/discovery-strategies/LGWebOSSSDPDiscoveryStrategy';
 import { ManualIPDiscoveryStrategy } from '../infrastructure/discovery/discovery-strategies/ManualIPDiscoveryStrategy';
 import { NativeUdpSocketTransport } from '../infrastructure/discovery/transport/NativeUdpSocketTransport';
@@ -35,6 +39,7 @@ import { bindConnectionToStore } from './bindConnectionToStore';
 
 export interface ContainerOverrides {
   keyValueStorage?: IKeyValueStorage;
+  deviceRepository?: ITVDeviceRepository;
   adapterFactory?: ITVAdapterFactory;
   scheduler?: Scheduler;
   /** Secure credential storage. LG webOS is registered when this is provided. */
@@ -42,15 +47,16 @@ export interface ContainerOverrides {
   discoveryService?: ITVDiscoveryService;
   manualStrategy?: ManualIPDiscoveryStrategy;
   motionSensorService?: IMotionSensorService;
+  wakeService?: ITVWakeService;
 }
 
 export function createContainer(overrides: ContainerOverrides = {}) {
   const store: AppStore = createAppStore();
   const credentialStorage: ICredentialStorage =
     overrides.credentialStorage ?? new InMemoryCredentialStorage();
-  const deviceRepository: ITVDeviceRepository = new LocalTVDeviceRepository(
-    overrides.keyValueStorage ?? new InMemoryKeyValueStorage(),
-  );
+  const deviceRepository: ITVDeviceRepository =
+    overrides.deviceRepository ??
+    new LocalTVDeviceRepository(overrides.keyValueStorage ?? new InMemoryKeyValueStorage());
   const adapterFactory =
     overrides.adapterFactory ??
     createDefaultAdapterFactory({
@@ -72,6 +78,8 @@ export function createContainer(overrides: ContainerOverrides = {}) {
     });
   const motionSensorService: IMotionSensorService =
     overrides.motionSensorService ?? new CoreMotionSensorService();
+  const wakeService: ITVWakeService =
+    overrides.wakeService ?? new WakeOnLanService();
 
   const connectTV = new ConnectTVUseCase(connectionManager, deviceRepository);
   const restoreLastTV = new RestoreLastTVUseCase(connectionManager, deviceRepository);
@@ -86,6 +94,8 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   });
   const getInstalledApps = new GetInstalledAppsUseCase(connectionManager);
   const forgetTV = new ForgetTVUseCase(deviceRepository, connectionManager, credentialStorage);
+  const wakeTV = new WakeTVUseCase(wakeService, connectionManager, overrides.scheduler);
+  const updateTVMac = new UpdateTVMacUseCase(deviceRepository);
 
   return {
     store,
@@ -96,6 +106,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
     discoveryManager,
     motionSensorService,
     credentialStorage,
+    wakeService,
     useCases: {
       connectTV,
       pairTV: new PairTVUseCase(connectTV),
@@ -108,6 +119,8 @@ export function createContainer(overrides: ContainerOverrides = {}) {
       startupRestoration,
       getInstalledApps,
       forgetTV,
+      wakeTV,
+      updateTVMac,
     },
   };
 }
