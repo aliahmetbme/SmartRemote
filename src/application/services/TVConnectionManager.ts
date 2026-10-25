@@ -124,6 +124,37 @@ export class TVConnectionManager {
   }
 
   private targetDevice: TVDevice | null = null;
+  private wakeInProgressDeviceId: string | null = null;
+
+  isWakeInProgress(deviceId?: string): boolean {
+    if (deviceId) {
+      return this.wakeInProgressDeviceId === deviceId;
+    }
+    return this.wakeInProgressDeviceId !== null;
+  }
+
+  /**
+   * Prepares connection manager for Wake-on-LAN:
+   * Cancels any pending pre-wake connection attempt so it does not block wake restoration,
+   * sets wakeInProgress flag to prevent competing foreground reconnects, and resets state.
+   */
+  prepareForWake(device: TVDevice): void {
+    this.wakeInProgressDeviceId = device.id;
+    this.shouldRestore = true;
+    this.targetDevice = device;
+    this.device = device;
+    this.beginOperation();
+    this.teardown().catch(() => undefined);
+    if (this.state !== TVConnectionState.Connected) {
+      this.resetTo(TVConnectionState.Disconnected);
+    }
+  }
+
+  finishWake(deviceId: string): void {
+    if (this.wakeInProgressDeviceId === deviceId) {
+      this.wakeInProgressDeviceId = null;
+    }
+  }
 
   connect(device: TVDevice): Promise<void> {
     if ((this.targetDevice?.id === device.id || this.device?.id === device.id) && this.inFlight) {
@@ -235,7 +266,13 @@ export class TVConnectionManager {
         this.state === TVConnectionState.Error ||
         this.state === TVConnectionState.Reconnecting;
 
-      if (this.shouldRestore && this.device && needsReconnect && !this.inFlight) {
+      if (
+        this.shouldRestore &&
+        this.device &&
+        needsReconnect &&
+        !this.inFlight &&
+        !this.isWakeInProgress(this.device.id)
+      ) {
         this.clearRetryTimer();
         this.retryCount = 0;
         if (typeof __DEV__ !== 'undefined' && __DEV__) {

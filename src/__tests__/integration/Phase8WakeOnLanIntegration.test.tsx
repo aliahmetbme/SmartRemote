@@ -77,9 +77,9 @@ describe('Phase 8 — Integration: Power Workflow, Settings, & UI Orchestration'
     const sendSpy = jest.spyOn(container.useCases.sendRemoteCommand, 'execute').mockResolvedValue(undefined);
     const wakeSpy = jest.spyOn(container.useCases.wakeTV, 'execute');
 
+    await container.connectionManager.connect(lgTvWithMac);
     container.store.dispatch(tvActions.savedDevicesLoaded([lgTvWithMac]));
     container.store.dispatch(tvActions.deviceSelected(lgTvWithMac.id));
-    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
 
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
@@ -215,7 +215,7 @@ describe('Phase 8 — Integration: Power Workflow, Settings, & UI Orchestration'
     expect(onNavigateToSettings).toHaveBeenCalled();
   });
 
-  it('RemoteScreen: Connecting / Reconnecting state blocks power button to avoid duplicate wake', async () => {
+  it('RemoteScreen: Connecting state keeps Power button enabled and allows explicit Wake', async () => {
     const storage = new InMemoryKeyValueStorage();
     const repo = new LocalTVDeviceRepository(storage);
     await repo.save(lgTvWithMac);
@@ -228,8 +228,12 @@ describe('Phase 8 — Integration: Power Workflow, Settings, & UI Orchestration'
       },
     });
 
-    const wakeSpy = jest.spyOn(container.useCases.wakeTV, 'execute');
-    const sendSpy = jest.spyOn(container.useCases.sendRemoteCommand, 'execute');
+    const powerTVSpy = jest.spyOn(container.useCases.powerTV, 'execute').mockResolvedValue({
+      action: 'wake',
+      success: true,
+      restored: true,
+      device: lgTvWithMac,
+    });
 
     container.store.dispatch(tvActions.savedDevicesLoaded([lgTvWithMac]));
     container.store.dispatch(tvActions.deviceSelected(lgTvWithMac.id));
@@ -249,12 +253,60 @@ describe('Phase 8 — Integration: Power Workflow, Settings, & UI Orchestration'
     });
 
     const powerButton = renderer.root.findByProps({ testID: 'btn-power' });
+    expect(powerButton.props.disabled).toBe(false);
+
     await act(async () => {
       powerButton.props.onPress();
     });
 
-    expect(wakeSpy).not.toHaveBeenCalled();
-    expect(sendSpy).not.toHaveBeenCalled();
+    expect(powerTVSpy).toHaveBeenCalledWith(lgTvWithMac, expect.any(Object));
+  });
+
+  it('RemoteScreen: Reconnecting state keeps Power button enabled and allows explicit Wake', async () => {
+    const storage = new InMemoryKeyValueStorage();
+    const repo = new LocalTVDeviceRepository(storage);
+    await repo.save(lgTvWithMac);
+
+    const container = createContainer({
+      deviceRepository: repo,
+      adapterFactory: {
+        supports: () => true,
+        create: () => new MockTVAdapter(),
+      },
+    });
+
+    const powerTVSpy = jest.spyOn(container.useCases.powerTV, 'execute').mockResolvedValue({
+      action: 'wake',
+      success: true,
+      restored: true,
+      device: lgTvWithMac,
+    });
+
+    container.store.dispatch(tvActions.savedDevicesLoaded([lgTvWithMac]));
+    container.store.dispatch(tvActions.deviceSelected(lgTvWithMac.id));
+    container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Reconnecting));
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = ReactTestRenderer.create(
+        <Provider store={container.store}>
+          <SafeAreaProvider initialMetrics={testMetrics}>
+            <ContainerProvider container={container}>
+              <RemoteScreen />
+            </ContainerProvider>
+          </SafeAreaProvider>
+        </Provider>,
+      );
+    });
+
+    const powerButton = renderer.root.findByProps({ testID: 'btn-power' });
+    expect(powerButton.props.disabled).toBe(false);
+
+    await act(async () => {
+      powerButton.props.onPress();
+    });
+
+    expect(powerTVSpy).toHaveBeenCalledWith(lgTvWithMac, expect.any(Object));
   });
 
   it('SettingsScreen: Wake-on-LAN card displays stored MAC, allows editing, and saves canonical MAC', async () => {

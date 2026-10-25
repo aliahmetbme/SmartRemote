@@ -89,54 +89,44 @@ export class WakeTVUseCase {
     const delay = (ms: number): Promise<void> =>
       new Promise(resolve => this.scheduler.setTimeout(resolve, ms));
 
-    // 1. Send Wake-on-LAN Magic Packet
-    onProgress?.('sending');
-    let wakeResult;
+    this.connectionManager.prepareForWake(device);
+
     try {
-      wakeResult = await this.wakeService.wake(device.macAddress!, {
-        port: options.port ?? 9,
-        broadcastAddress: options.broadcastAddress,
-        repeatCount: options.repeatCount ?? 3,
-        delayMs: options.delayMs ?? 50,
-      });
-    } catch (err) {
-      onProgress?.('failed');
-      throw err;
-    }
-
-    // 2. Initial hardware boot wait
-    onProgress?.('waiting');
-    if (initialBootDelayMs > 0) {
-      await delay(initialBootDelayMs);
-    }
-
-    // 3. Bounded restoration polling loop
-    const startTime = Date.now();
-    let lastError: Error | undefined;
-
-    while (Date.now() - startTime < wakeTimeoutMs) {
-      if (abortSignal?.aborted) {
-        throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
-      }
-
-      // If already connected by foreground or user, resolve successfully
-      if (
-        this.connectionManager.getState() === TVConnectionState.Connected &&
-        this.connectionManager.getDevice()?.id === device.id
-      ) {
-        onProgress?.('connected');
-        return {
-          success: true,
-          restored: true,
-          packetsSent: wakeResult.packetsSent,
-          destinations: wakeResult.destinations,
-        };
-      }
-
-      onProgress?.('connecting');
+      // 1. Send Wake-on-LAN Magic Packet
+      onProgress?.('sending');
+      let wakeResult;
       try {
-        await this.connectionManager.connect(device);
-        if (this.connectionManager.getState() === TVConnectionState.Connected) {
+        wakeResult = await this.wakeService.wake(device.macAddress!, {
+          port: options.port ?? 9,
+          broadcastAddress: options.broadcastAddress,
+          repeatCount: options.repeatCount ?? 3,
+          delayMs: options.delayMs ?? 50,
+        });
+      } catch (err) {
+        onProgress?.('failed');
+        throw err;
+      }
+
+      // 2. Initial hardware boot wait
+      onProgress?.('waiting');
+      if (initialBootDelayMs > 0) {
+        await delay(initialBootDelayMs);
+      }
+
+      // 3. Bounded restoration polling loop
+      const startTime = Date.now();
+      let lastError: Error | undefined;
+
+      while (Date.now() - startTime < wakeTimeoutMs) {
+        if (abortSignal?.aborted) {
+          throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
+        }
+
+        // If already connected by foreground or user, resolve successfully
+        if (
+          this.connectionManager.getState() === TVConnectionState.Connected &&
+          this.connectionManager.getDevice()?.id === device.id
+        ) {
           onProgress?.('connected');
           return {
             success: true,
@@ -145,34 +135,50 @@ export class WakeTVUseCase {
             destinations: wakeResult.destinations,
           };
         }
-      } catch (err: unknown) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        // TV is still booting / network interface not yet answering SSAP; continue loop
+
+        onProgress?.('connecting');
+        try {
+          await this.connectionManager.connect(device);
+          if (this.connectionManager.getState() === TVConnectionState.Connected) {
+            onProgress?.('connected');
+            return {
+              success: true,
+              restored: true,
+              packetsSent: wakeResult.packetsSent,
+              destinations: wakeResult.destinations,
+            };
+          }
+        } catch (err: unknown) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          // TV is still booting / network interface not yet answering SSAP; continue loop
+        }
+
+        if (abortSignal?.aborted) {
+          throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
+        }
+
+        const elapsed = Date.now() - startTime;
+        if (elapsed + probeIntervalMs < wakeTimeoutMs) {
+          await delay(probeIntervalMs);
+        } else {
+          break;
+        }
       }
 
-      if (abortSignal?.aborted) {
-        throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
-      }
-
-      const elapsed = Date.now() - startTime;
-      if (elapsed + probeIntervalMs < wakeTimeoutMs) {
-        await delay(probeIntervalMs);
-      } else {
-        break;
-      }
+      onProgress?.('failed');
+      return {
+        success: false,
+        restored: false,
+        packetsSent: wakeResult.packetsSent,
+        destinations: wakeResult.destinations,
+        error:
+          lastError ??
+          new TVTimeoutError(
+            `TV at ${device.ipAddress} did not power on within ${wakeTimeoutMs / 1000}s. Ensure "TV On With Mobile" is enabled in TV settings.`,
+          ),
+      };
+    } finally {
+      this.connectionManager.finishWake(device.id);
     }
-
-    onProgress?.('failed');
-    return {
-      success: false,
-      restored: false,
-      packetsSent: wakeResult.packetsSent,
-      destinations: wakeResult.destinations,
-      error:
-        lastError ??
-        new TVTimeoutError(
-          `TV at ${device.ipAddress} did not power on within ${wakeTimeoutMs / 1000}s. Ensure "TV On With Mobile" is enabled in TV settings.`,
-        ),
-    };
   }
 }

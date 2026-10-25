@@ -164,29 +164,29 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
     );
   };
 
-  const isTransitioning =
-    connectionStatus === TVConnectionState.Connecting ||
-    connectionStatus === TVConnectionState.Reconnecting ||
-    connectionStatus === TVConnectionState.Pairing;
-
   const handlePowerPress = async () => {
+    if (isWaking) {
+      return;
+    }
+
+    // 1. When connected: execute powerOff command
     if (isConnected) {
       handleCommand(
-        () => container.useCases.sendRemoteCommand.execute({ type: 'powerOff' }),
+        async () => {
+          await container.useCases.powerTV.execute(activeDevice, { isConnected: true });
+        },
         'powerOff',
       );
       return;
     }
 
-    if (isTransitioning || isWaking) {
-      return;
-    }
-
+    // 2. When not connected: require selected TV device for Wake-on-LAN
     if (!activeDevice) {
       Alert.alert('No TV Selected', 'Please select a TV first.');
       return;
     }
 
+    // When not connected: check MAC address configuration
     if (!activeDevice.macAddress) {
       Alert.alert(
         'MAC Address Required',
@@ -202,10 +202,12 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
       return;
     }
 
+    // TV is not connected (Disconnected, Error, Connecting, or Reconnecting)
+    // and has a valid MAC: initiate Wake-on-LAN and connection restoration.
     setIsWaking(true);
     setWakeStatusText('Sending Wake packet...');
     try {
-      const result = await container.useCases.wakeTV.execute(activeDevice, {
+      const result = await container.useCases.powerTV.execute(activeDevice, {
         onProgress: stage => {
           if (stage === 'sending') setWakeStatusText('Sending Wake packet...');
           if (stage === 'waiting') setWakeStatusText('Waiting for TV to boot...');
@@ -213,7 +215,19 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
         },
       });
 
-      if (!result.success && result.error) {
+      if (result.action === 'macRequired') {
+        Alert.alert(
+          'MAC Address Required',
+          "To turn on your TV from standby using Wake-on-LAN, SmartRemote needs your TV's MAC address.\n\nYou can enter it in Settings, or connect while the TV is on to detect it automatically.",
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Go to Settings',
+              onPress: () => onNavigateToSettings?.(),
+            },
+          ],
+        );
+      } else if (!result.success && result.error) {
         Alert.alert(
           'Wake-on-LAN',
           `Could not connect to the TV after sending Wake-on-LAN.\n\nPlease verify that "TV On With Mobile" or "Turn On via Wi-Fi" is enabled in your LG TV's settings.`,
@@ -284,9 +298,9 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
             style={[
               styles.powerButton,
               !isConnected && activeDevice?.macAddress && styles.powerButtonWake,
-              (isTransitioning || isWaking) && styles.controlDisabled,
+              isWaking && styles.controlDisabled,
             ]}
-            disabled={isTransitioning || isWaking}
+            disabled={isWaking}
             onPress={handlePowerPress}
             testID="btn-power"
             accessibilityLabel={isConnected ? 'Power Off' : 'Power On (Wake-on-LAN)'}

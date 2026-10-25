@@ -20,6 +20,8 @@ import {
 } from '../../domain/utils/magicPacket';
 import { WakeTVUseCase, WakeStage } from '../../application/usecases/WakeTVUseCase';
 import { UpdateTVMacUseCase } from '../../application/usecases/UpdateTVMacUseCase';
+import { PowerTVUseCase } from '../../application/usecases/PowerTVUseCase';
+import { SendRemoteCommandUseCase } from '../../application/usecases/SendRemoteCommandUseCase';
 import { TVConnectionManager } from '../../application/services/TVConnectionManager';
 import { WakeOnLanService, IWakeOnLanNativeModule } from '../../infrastructure/services/WakeOnLanService';
 import { LocalTVDeviceRepository } from '../../infrastructure/repositories/LocalTVDeviceRepository';
@@ -437,6 +439,269 @@ describe('Phase 8 — Wake-on-LAN & Automatic TV Power-On', () => {
       expect(r1).toBe(r2);
       // Magic packet only sent once
       expect(mockWakeService.wake).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // =========================================================================
+  // PHASE 8.2 — SINGLE POWER ACTION OWNER & RACE-SAFE COORDINATION
+  // =========================================================================
+  describe('PowerTVUseCase & Race-Safe Coordination (Phase 8.2)', () => {
+    let mockWakeService: ITVWakeService;
+    let mockAdapter: MockTVAdapter;
+    let connectionManager: TVConnectionManager;
+    let sendRemoteCommand: SendRemoteCommandUseCase;
+    let wakeTV: WakeTVUseCase;
+    let powerTV: PowerTVUseCase;
+
+    beforeEach(() => {
+      mockWakeService = {
+        isSupported: jest.fn().mockResolvedValue(true),
+        wake: jest.fn().mockResolvedValue({
+          success: true,
+          packetsSent: 3,
+          destinations: ['192.168.1.255'],
+        }),
+      };
+
+      mockAdapter = new MockTVAdapter();
+      connectionManager = new TVConnectionManager({
+        supports: () => true,
+        create: () => mockAdapter,
+      });
+
+      sendRemoteCommand = new SendRemoteCommandUseCase(connectionManager);
+      wakeTV = new WakeTVUseCase(mockWakeService, connectionManager);
+      powerTV = new PowerTVUseCase(connectionManager, sendRemoteCommand, wakeTV);
+    });
+
+    it('1. Connected state -> Power press executes powerOff command, does not send wake packet', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+      await connectionManager.connect(device);
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connected);
+
+      const sendSpy = jest.spyOn(sendRemoteCommand, 'execute').mockResolvedValue(undefined);
+      const wakeSpy = jest.spyOn(wakeTV, 'execute');
+
+      const result = await powerTV.execute(device);
+
+      expect(result.action).toBe('powerOff');
+      expect(result.success).toBe(true);
+      expect(sendSpy).toHaveBeenCalledWith({ type: 'powerOff' });
+      expect(wakeSpy).not.toHaveBeenCalled();
+      expect(mockWakeService.wake).not.toHaveBeenCalled();
+    });
+
+    it('2. Disconnected state + valid MAC -> Power press initiates WakeTVUseCase', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+      expect(connectionManager.getState()).toBe(TVConnectionState.Disconnected);
+
+      const result = await powerTV.execute(device, {
+        initialBootDelayMs: 5,
+        probeIntervalMs: 10,
+        wakeTimeoutMs: 3000,
+      });
+
+      expect(result.action).toBe('wake');
+      expect(result.success).toBe(true);
+      expect(result.restored).toBe(true);
+      expect(mockWakeService.wake).toHaveBeenCalledWith('AA:BB:CC:DD:EE:FF', expect.any(Object));
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connected);
+    });
+
+    it('3. Connecting state + valid MAC -> Power press initiates WakeTVUseCase without being blocked', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+
+      // Simulate connectionManager stuck in Connecting
+      mockAdapter.connect = jest.fn().mockImplementation(() => new Promise(() => {})); // hangs
+      connectionManager.connect(device).catch(() => undefined);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connecting);
+
+      // Restore connect implementation for when TV boots after wake
+      mockAdapter.connect = jest.fn().mockResolvedValue(undefined);
+
+      const result = await powerTV.execute(device, {
+        initialBootDelayMs: 5,
+        probeIntervalMs: 10,
+        wakeTimeoutMs: 3000,
+      });
+
+      expect(result.action).toBe('wake');
+      expect(result.success).toBe(true);
+      expect(result.restored).toBe(true);
+      expect(mockWakeService.wake).toHaveBeenCalledWith('AA:BB:CC:DD:EE:FF', expect.any(Object));
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connected);
+    });
+
+    it('4. Reconnecting state + valid MAC -> Power press initiates WakeTVUseCase', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+      await connectionManager.connect(device);
+
+      // Simulate connection loss -> Reconnecting
+      mockAdapter.simulateConnectionLoss(new TVConnectionError('TV dropped connection'));
+
+      const result = await powerTV.execute(device, {
+        initialBootDelayMs: 5,
+        probeIntervalMs: 10,
+        wakeTimeoutMs: 3000,
+      });
+
+      expect(result.action).toBe('wake');
+      expect(result.success).toBe(true);
+      expect(result.restored).toBe(true);
+      expect(mockWakeService.wake).toHaveBeenCalled();
+    });
+
+    it('5. Missing or invalid MAC -> returns macRequired action and does not send packet', async () => {
+      const deviceNoMac = makeWebOSDevice({ macAddress: undefined });
+      const res1 = await powerTV.execute(deviceNoMac);
+      expect(res1.action).toBe('macRequired');
+      expect(res1.success).toBe(false);
+      expect(mockWakeService.wake).not.toHaveBeenCalled();
+
+      const deviceBadMac = makeWebOSDevice({ macAddress: '00:00:00:00:00:00' });
+      const res2 = await powerTV.execute(deviceBadMac);
+      expect(res2.action).toBe('macRequired');
+      expect(res2.success).toBe(false);
+      expect(mockWakeService.wake).not.toHaveBeenCalled();
+    });
+
+    it('6. Concurrent startup connect and user wake: pre-wake attempt is cancelled and wake restores connection', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+
+      // Startup connects to offline TV (hangs)
+      let preWakeCancelled = false;
+      mockAdapter.connect = jest.fn().mockImplementation(() => {
+        return new Promise<void>(() => {});
+      });
+
+      const startupPromise = connectionManager.connect(device).catch(err => {
+        if (err?.code === 'cancelled') {
+          preWakeCancelled = true;
+        }
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connecting);
+
+      // User presses Power while startup connect is in flight
+      // TV boots and succeeds
+      mockAdapter.connect = jest.fn().mockResolvedValue(undefined);
+
+      const result = await powerTV.execute(device, {
+        initialBootDelayMs: 5,
+        probeIntervalMs: 10,
+        wakeTimeoutMs: 3000,
+      });
+
+      await startupPromise;
+      expect(preWakeCancelled).toBe(true);
+      expect(result.action).toBe('wake');
+      expect(result.success).toBe(true);
+      expect(result.restored).toBe(true);
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connected);
+    });
+
+    it('7. Duplicate Power taps: coalesced into a single wake workflow', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+
+      const p1 = powerTV.execute(device, { initialBootDelayMs: 20, probeIntervalMs: 10 });
+      const p2 = powerTV.execute(device, { initialBootDelayMs: 20, probeIntervalMs: 10 });
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.success).toBe(true);
+      expect(r2.success).toBe(true);
+      expect(mockWakeService.wake).toHaveBeenCalledTimes(1);
+    });
+
+    it('8. TV switching during wake: abortSignal cancels wake cleanly', async () => {
+      const device1 = makeWebOSDevice({ id: 'tv-1', macAddress: 'AA:BB:CC:DD:EE:FF' });
+      const abortSignal = { aborted: false };
+
+      mockAdapter.connect = jest.fn().mockRejectedValue(new TVConnectionError('TV booting'));
+
+      setTimeout(() => {
+        abortSignal.aborted = true;
+      }, 20);
+
+      await expect(
+        powerTV.execute(device1, {
+          initialBootDelayMs: 5,
+          probeIntervalMs: 10,
+          wakeTimeoutMs: 3000,
+          abortSignal,
+        }),
+      ).rejects.toThrow(/cancelled/i);
+    });
+
+    it('9. Foreground event during wake: does not launch competing parallel reconnect', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+      const reconnectSpy = jest.spyOn(connectionManager, 'reconnect');
+
+      // Start wake
+      const wakePromise = powerTV.execute(device, {
+        initialBootDelayMs: 10,
+        probeIntervalMs: 10,
+        wakeTimeoutMs: 3000,
+      });
+
+      // App comes to foreground while wake is in progress
+      expect(connectionManager.isWakeInProgress(device.id)).toBe(true);
+      await connectionManager.handleAppForeground();
+
+      // Foreground should NOT have launched competing reconnect
+      expect(reconnectSpy).not.toHaveBeenCalled();
+
+      await wakePromise;
+      expect(connectionManager.isWakeInProgress(device.id)).toBe(false);
+    });
+
+    it('10. Wake packet sent successfully but TV remains offline: reports timeout without false connected state', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+      mockAdapter.connect = jest.fn().mockRejectedValue(new TVConnectionError('Host unreachable'));
+
+      const result = await powerTV.execute(device, {
+        initialBootDelayMs: 5,
+        probeIntervalMs: 10,
+        wakeTimeoutMs: 50,
+      });
+
+      expect(result.action).toBe('wake');
+      expect(result.success).toBe(false);
+      expect(result.restored).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(connectionManager.getState()).not.toBe(TVConnectionState.Connected);
+    });
+
+    it('11. Wake followed by successful authenticated SSAP connection: transitions to Connected', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+      const stages: WakeStage[] = [];
+
+      const result = await powerTV.execute(device, {
+        initialBootDelayMs: 5,
+        probeIntervalMs: 10,
+        wakeTimeoutMs: 3000,
+        onProgress: s => stages.push(s),
+      });
+
+      expect(stages).toContain('sending');
+      expect(stages).toContain('waiting');
+      expect(stages).toContain('connecting');
+      expect(stages).toContain('connected');
+      expect(result.success).toBe(true);
+      expect(result.restored).toBe(true);
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connected);
+    });
+
+    it('12. No regressions to remote command handling: commands function after wake reconnection', async () => {
+      const device = makeWebOSDevice({ macAddress: 'AA:BB:CC:DD:EE:FF' });
+      await powerTV.execute(device, { initialBootDelayMs: 5, probeIntervalMs: 10 });
+      expect(connectionManager.getState()).toBe(TVConnectionState.Connected);
+
+      await sendRemoteCommand.execute({ type: 'volumeUp' });
+      expect(mockAdapter.commands).toContainEqual(expect.objectContaining({ command: 'volumeUp' }));
     });
   });
 });

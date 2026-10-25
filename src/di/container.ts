@@ -14,6 +14,7 @@ import { GetInstalledAppsUseCase } from '../application/usecases/GetInstalledApp
 import { StartupRestorationUseCase } from '../application/usecases/StartupRestorationUseCase';
 import { WakeTVUseCase } from '../application/usecases/WakeTVUseCase';
 import { UpdateTVMacUseCase } from '../application/usecases/UpdateTVMacUseCase';
+import { PowerTVUseCase } from '../application/usecases/PowerTVUseCase';
 import { tvActions } from '../store/slices/tvSlice';
 import { ICredentialStorage } from '../domain/interfaces/ICredentialStorage';
 import { ITVAdapterFactory } from '../domain/interfaces/ITVAdapterFactory';
@@ -92,10 +93,12 @@ export function createContainer(overrides: ContainerOverrides = {}) {
     onDiscoveryCompleted: () => store.dispatch(tvActions.discoveryCompleted()),
     onDiscoveryFailed: err => store.dispatch(tvActions.discoveryFailed(err)),
   });
+  const sendRemoteCommand = new SendRemoteCommandUseCase(connectionManager);
   const getInstalledApps = new GetInstalledAppsUseCase(connectionManager);
   const forgetTV = new ForgetTVUseCase(deviceRepository, connectionManager, credentialStorage);
   const wakeTV = new WakeTVUseCase(wakeService, connectionManager, overrides.scheduler);
   const updateTVMac = new UpdateTVMacUseCase(deviceRepository);
+  const powerTV = new PowerTVUseCase(connectionManager, sendRemoteCommand, wakeTV);
 
   return {
     store,
@@ -113,7 +116,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
       disconnectTV: new DisconnectTVUseCase(connectionManager),
       reconnectTV: new ReconnectTVUseCase(connectionManager),
       restoreLastTV,
-      sendRemoteCommand: new SendRemoteCommandUseCase(connectionManager),
+      sendRemoteCommand,
       discoverTVs,
       probeManualIP,
       startupRestoration,
@@ -121,6 +124,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
       forgetTV,
       wakeTV,
       updateTVMac,
+      powerTV,
     },
   };
 }
