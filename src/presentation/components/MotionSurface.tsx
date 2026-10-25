@@ -10,7 +10,8 @@ import {
 } from 'react-native';
 import { useContainer } from '../context/ContainerContext';
 import { useMotionPointer } from '../hooks/useMotionPointer';
-import { MotionDiagnosticData } from '../controllers/MotionPointerController';
+import { MotionCalibrationBar } from './MotionCalibrationBar';
+import { MotionDiagnosticOverlay } from './MotionDiagnosticOverlay';
 import { theme } from '../theme';
 
 export interface MotionSurfaceProps {
@@ -208,81 +209,18 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
       </View>
 
       {/* Sensitivity & Calibration Controls */}
-      <View style={styles.configCard}>
-        <View style={styles.configRow}>
-          <Text style={styles.configLabel}>Sensitivity</Text>
-          <View style={styles.stepperContainer}>
-            <TouchableOpacity
-              style={styles.stepperBtn}
-              onPress={() => handleSensitivityChange(sensitivity - 0.2)}
-              testID="motion-sensitivity-minus"
-              accessibilityLabel="Decrease Sensitivity"
-              accessibilityRole="button"
-            >
-              <Text style={styles.stepperBtnText}>−</Text>
-            </TouchableOpacity>
-
-            <Text style={styles.stepperValue} testID="motion-sensitivity-value">
-              {sensitivity.toFixed(1)}x
-            </Text>
-
-            <TouchableOpacity
-              style={styles.stepperBtn}
-              onPress={() => handleSensitivityChange(sensitivity + 0.2)}
-              testID="motion-sensitivity-plus"
-              accessibilityLabel="Increase Sensitivity"
-              accessibilityRole="button"
-            >
-              <Text style={styles.stepperBtnText}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Direction Inversion Options */}
-        <View style={styles.inversionRow}>
-          <TouchableOpacity
-            style={[styles.togglePill, invertX && styles.togglePillActive]}
-            onPress={handleToggleInvertX}
-            testID="motion-invert-x-toggle"
-            accessibilityLabel="Invert Horizontal Axis"
-            accessibilityRole="button"
-          >
-            <Text style={[styles.togglePillText, invertX && styles.togglePillTextActive]}>
-              Invert X: {invertX ? 'ON' : 'OFF'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.togglePill, invertY && styles.togglePillActive]}
-            onPress={handleToggleInvertY}
-            testID="motion-invert-y-toggle"
-            accessibilityLabel="Invert Vertical Axis"
-            accessibilityRole="button"
-          >
-            <Text style={[styles.togglePillText, invertY && styles.togglePillTextActive]}>
-              Invert Y: {invertY ? 'ON' : 'OFF'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Diagnostic Mode Toggle (Raw 1:1, Acc & Smooth OFF) */}
-        <View style={styles.diagToggleRow}>
-          <TouchableOpacity
-            style={[styles.diagToggleBtn, isDiagMode && styles.diagToggleBtnActive]}
-            onPress={handleToggleDiag}
-            testID="motion-diag-toggle"
-            accessibilityLabel="Toggle Diagnostic Mode"
-            accessibilityRole="button"
-          >
-            <Text style={[styles.diagToggleBtnText, isDiagMode && styles.diagToggleBtnTextActive]}>
-              {isDiagMode ? '✓ DIAGNOSTIC MODE (1:1 RAW) ACTIVE' : 'DIAGNOSTIC MODE: OFF'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Real-time Diagnostics HUD (Visible only when diagnostic mode is enabled) */}
-        {isDiagMode && <MotionDiagnosticHUD data={diagData} />}
-      </View>
+      <MotionCalibrationBar
+        sensitivity={sensitivity}
+        onSensitivityChange={handleSensitivityChange}
+        invertX={invertX}
+        onToggleInvertX={handleToggleInvertX}
+        invertY={invertY}
+        onToggleInvertY={handleToggleInvertY}
+        isDiagMode={isDiagMode}
+        onToggleDiag={handleToggleDiag}
+      >
+        {isDiagMode && <MotionDiagnosticOverlay data={diagData} />}
+      </MotionCalibrationBar>
 
       {/* Brief Usage Instructions */}
       <View style={styles.instructionsContainer}>
@@ -299,34 +237,6 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
     </View>
   );
 };
-
-export interface MotionDiagnosticHUDProps {
-  data: MotionDiagnosticData | null;
-}
-
-export const MotionDiagnosticHUD: React.FC<MotionDiagnosticHUDProps> = React.memo(({ data }) => {
-  if (!data) return null;
-  return (
-    <View style={styles.diagCard} testID="motion-diag-card">
-      <Text style={styles.diagTitle}>LIVE AXIS DIAGNOSTICS (ACC & SMOOTH OFF)</Text>
-      <Text style={styles.diagRow}>
-        Gyro: X={data.gyro.x.toFixed(2)} Y={data.gyro.y.toFixed(2)} Z={data.gyro.z.toFixed(2)} rad/s
-      </Text>
-      <Text style={styles.diagRow}>
-        Grav: X={data.gravity.x.toFixed(2)} Y={data.gravity.y.toFixed(2)} Z={data.gravity.z.toFixed(2)}
-      </Text>
-      <Text style={styles.diagRow}>
-        Rates: H(yaw)={data.angularRates.horizontal.toFixed(2)} V(pitch)={data.angularRates.vertical.toFixed(2)}
-      </Text>
-      <Text style={styles.diagRow}>
-        Rate: {data.sampleRateHz ?? 0}Hz ({data.sampleIntervalMs ?? 0}ms) | Send: {data.dispatchedRateHz ?? 0}Hz
-      </Text>
-      <Text style={styles.diagRowHighlight}>
-        Pointer Out: dx={data.pointerDelta.dx} dy={data.pointerDelta.dy} (pending: {data.pendingDelta?.dx ?? 0}, {data.pendingDelta?.dy ?? 0})
-      </Text>
-    </View>
-  );
-});
 
 const styles = StyleSheet.create({
   container: {
@@ -351,18 +261,16 @@ const styles = StyleSheet.create({
   },
   statusCard: {
     width: '100%',
-    backgroundColor: theme.colors.surface,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
+    backgroundColor: '#121622',
     borderRadius: theme.borderRadius.md,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
+    borderWidth: 1.5,
+    borderColor: '#252D3F',
+    padding: theme.spacing.md,
     marginBottom: theme.spacing.md,
-    alignItems: 'center',
   },
   statusCardAiming: {
-    borderColor: theme.colors.secondary,
-    backgroundColor: 'rgba(0, 210, 255, 0.08)',
+    borderColor: '#4ADE80',
+    backgroundColor: '#0E1F18',
   },
   statusCardDisabled: {
     opacity: 0.5,
@@ -370,7 +278,7 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   statusPulse: {
     width: 8,
@@ -378,274 +286,143 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginRight: 8,
   },
-  pulseInactive: {
-    backgroundColor: theme.colors.textMuted,
-  },
   pulseActive: {
-    backgroundColor: theme.colors.secondary,
+    backgroundColor: '#4ADE80',
+  },
+  pulseInactive: {
+    backgroundColor: '#65738E',
   },
   statusTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: theme.colors.textSecondary,
-    letterSpacing: 0.8,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#8A9BB5',
+    letterSpacing: 1.2,
   },
   statusTitleAiming: {
-    color: theme.colors.secondary,
+    color: '#4ADE80',
   },
   statusDescription: {
-    fontSize: 12,
+    fontSize: 13,
     color: theme.colors.textMuted,
-    textAlign: 'center',
+    lineHeight: 18,
   },
   aimSurface: {
     width: '100%',
-    height: 180,
-    backgroundColor: theme.colors.surfaceSubtle,
-    borderWidth: 2,
-    borderColor: theme.colors.border,
+    height: 140,
+    backgroundColor: '#161B26',
     borderRadius: theme.borderRadius.lg,
-    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#2B354C',
+    borderStyle: 'dashed',
     justifyContent: 'center',
-    padding: theme.spacing.md,
+    alignItems: 'center',
     marginBottom: theme.spacing.md,
   },
   aimSurfacePressed: {
-    borderColor: theme.colors.secondary,
-    backgroundColor: 'rgba(0, 210, 255, 0.12)',
-    shadowColor: theme.colors.secondary,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 6,
+    borderColor: '#4ADE80',
+    backgroundColor: '#12261C',
+    borderStyle: 'solid',
   },
   surfaceDisabled: {
     opacity: 0.4,
   },
   aimReticle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
+    width: 44,
+    height: 44,
     justifyContent: 'center',
-    marginBottom: theme.spacing.sm,
+    alignItems: 'center',
+    marginBottom: 8,
   },
   reticleRing: {
-    position: 'absolute',
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 2,
-    borderColor: theme.colors.borderActive,
-    borderStyle: 'dashed',
+    borderColor: '#3D4A66',
   },
   reticleRingActive: {
-    borderColor: theme.colors.secondary,
-    transform: [{ scale: 1.1 }],
+    borderColor: '#4ADE80',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
   },
   reticleDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: theme.colors.textMuted,
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#65738E',
   },
   reticleDotActive: {
-    backgroundColor: theme.colors.secondary,
-    transform: [{ scale: 1.25 }],
+    backgroundColor: '#4ADE80',
   },
   aimSurfaceLabel: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
-    color: theme.colors.textPrimary,
-    letterSpacing: 1.2,
-    marginBottom: 4,
+    color: '#D4DAE8',
+    letterSpacing: 1.5,
   },
   aimSurfaceLabelPressed: {
-    color: theme.colors.secondary,
+    color: '#4ADE80',
   },
   aimSurfaceSublabel: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
-    textAlign: 'center',
+    color: '#65738E',
+    marginTop: 4,
   },
   actionsRow: {
     flexDirection: 'row',
     width: '100%',
-    gap: theme.spacing.sm,
+    justifyContent: 'space-between',
     marginBottom: theme.spacing.md,
   },
   actionBtn: {
     flex: 1,
-    height: 48,
+    paddingVertical: 14,
     borderRadius: theme.borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    borderWidth: 1.5,
   },
   selectBtn: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
+    backgroundColor: '#1B293A',
+    borderColor: '#2C4A6F',
+    marginRight: 6,
   },
   selectBtnText: {
-    color: theme.colors.textPrimary,
-    fontWeight: '700',
-    fontSize: 14,
-    letterSpacing: 0.5,
+    fontSize: 13,
+    fontWeight: '800',
+    color: theme.colors.secondary,
+    letterSpacing: 0.8,
   },
   recenterBtn: {
-    backgroundColor: theme.colors.surface,
-    borderColor: theme.colors.border,
+    backgroundColor: '#1B2130',
+    borderColor: '#2B354C',
+    marginLeft: 6,
   },
   recenterBtnText: {
-    color: theme.colors.textSecondary,
-    fontWeight: '600',
     fontSize: 13,
-    letterSpacing: 0.5,
+    fontWeight: '700',
+    color: '#B6BECE',
+    letterSpacing: 0.8,
   },
   btnDisabled: {
     opacity: 0.4,
   },
-  configCard: {
-    width: '100%',
-    backgroundColor: theme.colors.surface,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-  },
-  configRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: theme.spacing.sm,
-  },
-  configLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: theme.colors.textPrimary,
-  },
-  stepperContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surfaceSubtle,
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  stepperBtn: {
-    width: 38,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperBtnText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: theme.colors.textPrimary,
-  },
-  stepperValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: theme.colors.secondary,
-    paddingHorizontal: theme.spacing.sm,
-    minWidth: 44,
-    textAlign: 'center',
-  },
-  inversionRow: {
-    flexDirection: 'row',
-    gap: theme.spacing.sm,
-    marginTop: 4,
-  },
-  togglePill: {
-    flex: 1,
-    paddingVertical: 6,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: 'center',
-  },
-  togglePillActive: {
-    borderColor: theme.colors.secondary,
-    backgroundColor: 'rgba(0, 210, 255, 0.1)',
-  },
-  togglePillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: theme.colors.textMuted,
-  },
-  togglePillTextActive: {
-    color: theme.colors.secondary,
-  },
-  diagToggleRow: {
-    marginTop: theme.spacing.sm,
-    width: '100%',
-  },
-  diagToggleBtn: {
-    width: '100%',
-    paddingVertical: 7,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  diagToggleBtnActive: {
-    borderColor: '#FFB800',
-    backgroundColor: 'rgba(255, 184, 0, 0.12)',
-  },
-  diagToggleBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: theme.colors.textMuted,
-    letterSpacing: 0.5,
-  },
-  diagToggleBtnTextActive: {
-    color: '#FFB800',
-  },
-  diagCard: {
-    marginTop: theme.spacing.sm,
-    width: '100%',
-    padding: theme.spacing.sm,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    borderRadius: theme.borderRadius.sm,
-    borderWidth: 1,
-    borderColor: '#FFB800',
-  },
-  diagTitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#FFB800',
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  diagRow: {
-    fontSize: 11,
-    fontFamily: 'Courier',
-    color: theme.colors.textSecondary,
-    marginBottom: 2,
-  },
-  diagRowHighlight: {
-    fontSize: 12,
-    fontFamily: 'Courier',
-    fontWeight: '700',
-    color: theme.colors.secondary,
-    marginTop: 2,
-  },
   instructionsContainer: {
     width: '100%',
-    paddingHorizontal: theme.spacing.xs,
+    backgroundColor: '#10141E',
+    borderRadius: theme.borderRadius.sm,
+    padding: theme.spacing.md,
   },
   instructionLine: {
     fontSize: 12,
-    color: theme.colors.textMuted,
+    color: '#65738E',
     lineHeight: 18,
-    marginBottom: 2,
+    marginVertical: 2,
   },
   highlightText: {
-    color: theme.colors.textSecondary,
+    color: '#D4DAE8',
     fontWeight: '600',
   },
 });
