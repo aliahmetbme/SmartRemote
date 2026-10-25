@@ -1,4 +1,4 @@
-import { Scheduler } from '../../../application/services/TVConnectionManager';
+import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { TVConnectionError, TVTimeoutError } from '../../../domain/errors/TVConnectionError';
 import { PointerButton } from './LGWebOSCommandMapper';
 import { IWebSocketTransport, WebSocketFactory } from './WebSocketTransport';

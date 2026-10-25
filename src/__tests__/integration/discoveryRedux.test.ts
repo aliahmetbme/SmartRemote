@@ -9,7 +9,16 @@ import {
   selectDiscoveryError,
   selectDiscoveryStatus,
 } from '../../store/selectors';
+import { tvActions } from '../../store/slices/tvSlice';
+import { TVDevice } from '../../domain/entities/TVDevice';
 import { TVDiscoveryError } from '../../domain/errors/TVDiscoveryError';
+
+const bindListener = (dispatch: any) => ({
+  onDiscoveryStarted: () => dispatch(tvActions.discoveryStarted()),
+  onDeviceDiscovered: (device: TVDevice) => dispatch(tvActions.deviceDiscovered(device)),
+  onDiscoveryCompleted: () => dispatch(tvActions.discoveryCompleted()),
+  onDiscoveryFailed: (err: any) => dispatch(tvActions.discoveryFailed(err)),
+});
 
 describe('DiscoveryManager and Redux Integration', () => {
   it('dispatches discoveryStarted, deviceDiscovered, and discoveryCompleted to Redux', async () => {
@@ -26,7 +35,7 @@ describe('DiscoveryManager and Redux Integration', () => {
     };
 
     const useCase = new DiscoverTVsUseCase(discoveryService);
-    const manager = new DiscoveryManager(useCase, store.dispatch);
+    const manager = new DiscoveryManager(useCase, bindListener(store.dispatch));
 
     expect(selectDiscoveryStatus(store.getState())).toBe('idle');
     expect(selectDiscoveryError(store.getState())).toBeNull();
@@ -55,7 +64,7 @@ describe('DiscoveryManager and Redux Integration', () => {
     };
 
     const useCase = new DiscoverTVsUseCase(failingService);
-    const manager = new DiscoveryManager(useCase, store.dispatch);
+    const manager = new DiscoveryManager(useCase, bindListener(store.dispatch));
 
     await expect(manager.startDiscovery()).rejects.toThrow('UDP multicast transport unsupported');
     expect(selectDiscoveryStatus(store.getState())).toBe('failed');
@@ -82,7 +91,7 @@ describe('DiscoveryManager and Redux Integration', () => {
     };
 
     const useCase = new DiscoverTVsUseCase(slowService);
-    const manager = new DiscoveryManager(useCase, store.dispatch);
+    const manager = new DiscoveryManager(useCase, bindListener(store.dispatch));
 
     const startPromise = manager.startDiscovery();
     expect(manager.getIsScanning()).toBe(true);

@@ -85,14 +85,8 @@ export const SettingsScreen: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await container.deviceRepository.remove(deviceId);
-              if (container.credentialStorage) {
-                await container.credentialStorage.remove(deviceId).catch(() => undefined);
-              }
+              await container.useCases.forgetTV.execute(deviceId);
               dispatch(tvActions.deviceForgotten(deviceId));
-              if (activeDeviceId === deviceId || managerDevice?.id === deviceId) {
-                await container.useCases.disconnectTV.execute().catch(() => undefined);
-              }
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : 'Could not forget device';
               Alert.alert('Error', msg);

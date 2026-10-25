@@ -1,5 +1,6 @@
-import { Scheduler } from '../../../application/services/TVConnectionManager';
+import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { TVConnectionError, TVTimeoutError } from '../../../domain/errors/TVConnectionError';
+import { TVUnsupportedOperationError } from '../../../domain/errors/TVUnsupportedOperationError';
 import {
   sanitizeInboundSummary,
   sanitizeOutboundSummary,
@@ -135,13 +136,18 @@ export class LGWebOSWebSocketClient {
     return this.lastInboundSummary;
   }
 
+  isPingSupported(): boolean {
+    return Boolean(this.socket && typeof this.socket.ping === 'function');
+  }
+
   async ping(): Promise<void> {
     if (!this.opened || !this.socket) {
       throw new TVConnectionError('SSAP socket is not open');
     }
-    if (typeof this.socket.ping === 'function') {
-      await this.socket.ping();
+    if (typeof this.socket.ping !== 'function') {
+      throw new TVUnsupportedOperationError('WebSocket transport does not support native ping');
     }
+    await this.socket.ping();
   }
 
   open(url: string): Promise<void> {

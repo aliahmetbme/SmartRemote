@@ -1,4 +1,4 @@
-import { Scheduler } from '../../../application/services/TVConnectionManager';
+import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { TVConnectionError, TVTimeoutError } from '../../../domain/errors/TVConnectionError';
 import { TVPairingError } from '../../../domain/errors/TVPairingError';
 import { ICredentialStorage } from '../../../domain/interfaces/ICredentialStorage';

@@ -1,11 +1,10 @@
 import { DiscoveryManager } from '../application/services/DiscoveryManager';
-import {
-  Scheduler,
-  TVConnectionManager,
-} from '../application/services/TVConnectionManager';
+import { TVConnectionManager } from '../application/services/TVConnectionManager';
+import { Scheduler } from '../domain/interfaces/IScheduler';
 import { ConnectTVUseCase } from '../application/usecases/ConnectTVUseCase';
 import { DisconnectTVUseCase } from '../application/usecases/DisconnectTVUseCase';
 import { DiscoverTVsUseCase } from '../application/usecases/DiscoverTVsUseCase';
+import { ForgetTVUseCase } from '../application/usecases/ForgetTVUseCase';
 import { PairTVUseCase } from '../application/usecases/PairTVUseCase';
 import { ProbeManualIPUseCase } from '../application/usecases/ProbeManualIPUseCase';
 import { ReconnectTVUseCase } from '../application/usecases/ReconnectTVUseCase';
@@ -13,6 +12,7 @@ import { RestoreLastTVUseCase } from '../application/usecases/RestoreLastTVUseCa
 import { SendRemoteCommandUseCase } from '../application/usecases/SendRemoteCommandUseCase';
 import { GetInstalledAppsUseCase } from '../application/usecases/GetInstalledAppsUseCase';
 import { StartupRestorationUseCase } from '../application/usecases/StartupRestorationUseCase';
+import { tvActions } from '../store/slices/tvSlice';
 import { ICredentialStorage } from '../domain/interfaces/ICredentialStorage';
 import { ITVAdapterFactory } from '../domain/interfaces/ITVAdapterFactory';
 import { ITVDeviceRepository } from '../domain/interfaces/ITVDeviceRepository';
@@ -78,8 +78,14 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   const discoverTVs = new DiscoverTVsUseCase(discoveryService);
   const probeManualIP = new ProbeManualIPUseCase(manualStrategy);
   const startupRestoration = new StartupRestorationUseCase(deviceRepository, restoreLastTV);
-  const discoveryManager = new DiscoveryManager(discoverTVs, store.dispatch);
+  const discoveryManager = new DiscoveryManager(discoverTVs, {
+    onDiscoveryStarted: () => store.dispatch(tvActions.discoveryStarted()),
+    onDeviceDiscovered: device => store.dispatch(tvActions.deviceDiscovered(device)),
+    onDiscoveryCompleted: () => store.dispatch(tvActions.discoveryCompleted()),
+    onDiscoveryFailed: err => store.dispatch(tvActions.discoveryFailed(err)),
+  });
   const getInstalledApps = new GetInstalledAppsUseCase(connectionManager);
+  const forgetTV = new ForgetTVUseCase(deviceRepository, connectionManager, credentialStorage);
 
   return {
     store,
@@ -101,6 +107,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
       probeManualIP,
       startupRestoration,
       getInstalledApps,
+      forgetTV,
     },
   };
 }

@@ -29,7 +29,7 @@ import { PairingStatus } from '../../domain/enums/PairingStatus';
 import { TVBrand } from '../../domain/enums/TVBrand';
 import { TVPlatform } from '../../domain/enums/TVPlatform';
 import { TVProtocol } from '../../domain/enums/TVProtocol';
-import { isLocalIPv4Address } from '../../infrastructure/discovery/ssdp/SSDPParser';
+import { isLocalIPv4Address } from '../../domain/utils/ipValidator';
 import { formatIpAddress } from '../utils/ipFormatter';
 import { tvActions } from '../../store/slices/tvSlice';
 import { useContainer } from '../context/ContainerContext';

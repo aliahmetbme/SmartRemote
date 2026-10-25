@@ -1,19 +1,15 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-export type RemoteMode = 'buttons' | 'touchpad';
-
 export interface RemoteState {
   volume: number | null;
   isMuted: boolean;
   activeInput: string | null;
-  selectedRemoteMode: RemoteMode;
 }
 
 export const initialRemoteState: RemoteState = {
   volume: null,
   isMuted: false,
   activeInput: null,
-  selectedRemoteMode: 'buttons',
 };
 
 const remoteSlice = createSlice({
@@ -28,9 +24,6 @@ const remoteSlice = createSlice({
     },
     activeInputChanged(state, action: PayloadAction<string | null>) {
       state.activeInput = action.payload;
-    },
-    remoteModeSelected(state, action: PayloadAction<RemoteMode>) {
-      state.selectedRemoteMode = action.payload;
     },
   },
 });

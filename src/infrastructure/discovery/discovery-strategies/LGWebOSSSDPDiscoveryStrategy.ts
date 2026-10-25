@@ -1,4 +1,4 @@
-import { Scheduler } from '../../../application/services/TVConnectionManager';
+import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { UNKNOWN_CAPABILITIES } from '../../../domain/entities/TVCapabilities';
 import { TVDevice } from '../../../domain/entities/TVDevice';
 import { PairingStatus } from '../../../domain/enums/PairingStatus';

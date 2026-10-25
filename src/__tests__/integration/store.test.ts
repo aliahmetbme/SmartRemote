@@ -12,7 +12,8 @@ describe('store', () => {
     const state = createAppStore().getState();
     expect(state.connection.status).toBe(TVConnectionState.Disconnected);
     expect(state.tv.discoveryStatus).toBe('idle');
-    expect(state.remote.selectedRemoteMode).toBe('buttons');
+    expect(state.remote.volume).toBeNull();
+    expect(state.remote.isMuted).toBe(false);
   });
 
   it('upserts discovered devices by id', () => {

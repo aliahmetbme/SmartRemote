@@ -12,7 +12,6 @@ export const selectCapabilities = (s: RootState) => s.tv.capabilities;
 export const selectDiscoveryStatus = (s: RootState) => s.tv.discoveryStatus;
 export const selectDiscoveryError = (s: RootState) => s.tv.discoveryError;
 export const selectSelectedDeviceId = (s: RootState) => s.tv.selectedDeviceId;
-export const selectRemoteMode = (s: RootState) => s.remote.selectedRemoteMode;
 
 export const selectSelectedDevice = createSelector(
   [(s: RootState) => s.tv.savedDevices, (s: RootState) => s.tv.discoveredDevices, (s: RootState) => s.tv.selectedDeviceId],

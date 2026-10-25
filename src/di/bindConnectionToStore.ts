@@ -37,10 +37,21 @@ export function bindConnectionToStore(
           capabilities: capabilities ?? device.capabilities,
           lastConnectedAt: Date.now(),
         };
-        dispatch(tvActions.deviceSaved(updatedDevice));
         if (repository) {
-          repository.save(updatedDevice).catch(() => undefined);
+          repository
+            .save(updatedDevice)
+            .then(() => {
+              dispatch(tvActions.deviceSaved(updatedDevice));
+            })
+            .catch(err => {
+              console.warn(
+                '[SmartRemote][StoreBridge] Failed to persist connected device to repository:',
+                err,
+              );
+            });
           repository.setLastSelectedId(device.id).catch(() => undefined);
+        } else {
+          dispatch(tvActions.deviceSaved(updatedDevice));
         }
       }
     } else if (state === TVConnectionState.Error && error instanceof TVPairingError) {

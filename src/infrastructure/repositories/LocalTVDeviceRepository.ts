@@ -5,10 +5,11 @@ import { TVBrand } from '../../domain/enums/TVBrand';
 import { TVPlatform } from '../../domain/enums/TVPlatform';
 import { TVProtocol } from '../../domain/enums/TVProtocol';
 import { ITVDeviceRepository } from '../../domain/interfaces/ITVDeviceRepository';
+import { RepositoryCorruptionError } from '../../domain/errors/RepositoryCorruptionError';
 import { IKeyValueStorage } from '../storage/IKeyValueStorage';
 
-const DEVICES_KEY = 'smartremote.savedDevices.v1';
-const LAST_SELECTED_KEY = 'smartremote.lastSelectedDeviceId.v1';
+export const DEVICES_KEY = 'smartremote.savedDevices.v1';
+export const LAST_SELECTED_KEY = 'smartremote.lastSelectedDeviceId.v1';
 
 export function normalizeDevice(value: unknown): TVDevice | null {
   if (typeof value !== 'object' || value === null) {
@@ -66,71 +67,67 @@ export class LocalTVDeviceRepository implements ITVDeviceRepository {
 
   private withLock<T>(op: () => Promise<T>): Promise<T> {
     const next = this.writeLock.then(op, op);
-    this.writeLock = next.then(() => {}, () => {});
+    this.writeLock = next.then(
+      () => {},
+      () => {},
+    );
     return next;
+  }
+
+  private parseRawDevices(raw: string | null): TVDevice[] {
+    if (!raw) {
+      return [];
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      throw new RepositoryCorruptionError(
+        'Storage data corrupted: failed to parse saved devices JSON',
+        e,
+      );
+    }
+    if (!Array.isArray(parsed)) {
+      throw new RepositoryCorruptionError(
+        'Storage data corrupted: expected an array of saved devices',
+      );
+    }
+    const valid: TVDevice[] = [];
+    for (const item of parsed) {
+      const norm = normalizeDevice(item);
+      if (norm) {
+        valid.push(norm);
+      }
+    }
+    if (valid.length < parsed.length) {
+      console.warn(
+        `[SmartRemote][Repository] Ignored ${parsed.length - valid.length} malformed device entries during deserialization`,
+      );
+    }
+    return valid;
   }
 
   async getAll(): Promise<TVDevice[]> {
     const raw = await this.storage.getItem(DEVICES_KEY);
-    if (!raw) {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log('[SmartRemote][Repository] No saved devices found in storage');
-      }
-      return [];
+    const devices = this.parseRawDevices(raw);
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log(
+        `[SmartRemote][Repository] Loaded ${devices.length} saved TV device(s): [${devices.map(d => d.id).join(', ')}]`,
+      );
     }
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        console.warn('[SmartRemote][Repository] Storage format invalid, expected array');
-        return [];
-      }
-      const valid: TVDevice[] = [];
-      for (const item of parsed) {
-        const norm = normalizeDevice(item);
-        if (norm) {
-          valid.push(norm);
-        }
-      }
-      if (valid.length < parsed.length) {
-        console.warn(
-          `[SmartRemote][Repository] Ignored ${parsed.length - valid.length} unrecoverable device entries`,
-        );
-      }
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(
-          `[SmartRemote][Repository] Loaded ${valid.length} saved TV device(s): [${valid.map(d => d.id).join(', ')}]`,
-        );
-      }
-      return valid;
-    } catch (e) {
-      console.error('[SmartRemote][Repository] Failed to parse stored devices JSON', e);
-      return [];
-    }
+    return devices;
   }
 
   async getById(id: string): Promise<TVDevice | null> {
-    return (await this.getAll()).find(d => d.id === id) ?? null;
+    const devices = await this.getAll();
+    return devices.find(d => d.id === id) ?? null;
   }
 
   async save(device: TVDevice): Promise<void> {
     return this.withLock(async () => {
-      // Re-read inside lock to prevent race conditions
+      // Re-read inside lock to prevent race conditions and detect corrupt storage
       const raw = await this.storage.getItem(DEVICES_KEY);
-      let devices: TVDevice[] = [];
-      if (raw) {
-        try {
-          const parsed: unknown = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            for (const item of parsed) {
-              const norm = normalizeDevice(item);
-              if (norm) devices.push(norm);
-            }
-          }
-        } catch {
-          // If raw is corrupted JSON, reset list
-          devices = [];
-        }
-      }
+      const devices = this.parseRawDevices(raw);
 
       const index = devices.findIndex(d => d.id === device.id);
       if (index >= 0) {
@@ -149,14 +146,16 @@ export class LocalTVDeviceRepository implements ITVDeviceRepository {
 
   async remove(id: string): Promise<void> {
     return this.withLock(async () => {
-      const devices = (await this.getAll()).filter(d => d.id !== id);
-      await this.storage.setItem(DEVICES_KEY, JSON.stringify(devices));
+      const raw = await this.storage.getItem(DEVICES_KEY);
+      const devices = this.parseRawDevices(raw);
+      const filtered = devices.filter(d => d.id !== id);
+      await this.storage.setItem(DEVICES_KEY, JSON.stringify(filtered));
       if ((await this.getLastSelectedId()) === id) {
         await this.setLastSelectedId(null);
       }
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.log(
-          `[SmartRemote][Repository] Removed TV device id='${id}', remaining saved=${devices.length}`,
+          `[SmartRemote][Repository] Removed TV device id='${id}', remaining saved=${filtered.length}`,
         );
       }
     });

@@ -22,13 +22,39 @@ describe('LocalTVDeviceRepository', () => {
     expect(await repo.getLastSelectedId()).toBeNull();
   });
 
-  it('tolerates corrupted storage', async () => {
+  it('rejects unrecoverable corrupted JSON without destructive overwrite on getAll, save and remove', async () => {
     const storage = new InMemoryKeyValueStorage();
     const repo = new LocalTVDeviceRepository(storage);
-    await storage.setItem('smartremote.savedDevices.v1', '{not json');
-    expect(await repo.getAll()).toEqual([]);
+    const corruptedPayload = '{not json syntax error';
+    await storage.setItem('smartremote.savedDevices.v1', corruptedPayload);
+
+    // getAll throws explicit corruption error
+    await expect(repo.getAll()).rejects.toThrow();
+
+    // save does NOT destroy the corrupted file silently
+    await expect(repo.save(makeMockDevice())).rejects.toThrow();
+    expect(await storage.getItem('smartremote.savedDevices.v1')).toBe(corruptedPayload);
+
+    // remove does NOT destroy the corrupted file silently
+    await expect(repo.remove('mock-1')).rejects.toThrow();
+    expect(await storage.getItem('smartremote.savedDevices.v1')).toBe(corruptedPayload);
+
+    // Array containing partially valid devices recovers valid ones without destroying them
     await storage.setItem('smartremote.savedDevices.v1', JSON.stringify([{ foo: 1 }, makeMockDevice()]));
     expect(await repo.getAll()).toHaveLength(1);
+  });
+
+  it('serializes concurrent writes without losing entries', async () => {
+    const storage = new InMemoryKeyValueStorage();
+    const repo = new LocalTVDeviceRepository(storage);
+    const dev1 = makeMockDevice({ id: 'tv-1', name: 'TV 1' });
+    const dev2 = makeMockDevice({ id: 'tv-2', name: 'TV 2' });
+    const dev3 = makeMockDevice({ id: 'tv-3', name: 'TV 3' });
+
+    await Promise.all([repo.save(dev1), repo.save(dev2), repo.save(dev3)]);
+    const all = await repo.getAll();
+    expect(all).toHaveLength(3);
+    expect(all.map(d => d.id).sort()).toEqual(['tv-1', 'tv-2', 'tv-3']);
   });
 
   it('persists only device metadata (no credential fields)', async () => {

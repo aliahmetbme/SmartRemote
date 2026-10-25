@@ -1,14 +1,14 @@
 import { TVDevice } from '../../domain/entities/TVDevice';
-import { ManualIPDiscoveryStrategy } from '../../infrastructure/discovery/discovery-strategies/ManualIPDiscoveryStrategy';
+import { IManualIPProber, ProbeOptions } from '../../domain/interfaces/IManualIPProber';
 
 /**
  * Use case to validate and probe a manual IP address.
  * Resolves with a candidate TVDevice ready for connection.
  */
 export class ProbeManualIPUseCase {
-  constructor(private readonly manualStrategy: ManualIPDiscoveryStrategy) {}
+  constructor(private readonly prober: IManualIPProber) {}
 
-  execute(ipAddress: string, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<TVDevice> {
-    return this.manualStrategy.probe(ipAddress, options);
+  execute(ipAddress: string, options?: ProbeOptions): Promise<TVDevice> {
+    return this.prober.probe(ipAddress, options);
   }
 }

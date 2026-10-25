@@ -1,4 +1,4 @@
-import { Scheduler } from '../../../application/services/TVConnectionManager';
+import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { UNKNOWN_CAPABILITIES } from '../../../domain/entities/TVCapabilities';
 import { TVDevice } from '../../../domain/entities/TVDevice';
 import { PairingStatus } from '../../../domain/enums/PairingStatus';
@@ -6,8 +6,9 @@ import { TVBrand } from '../../../domain/enums/TVBrand';
 import { TVPlatform } from '../../../domain/enums/TVPlatform';
 import { TVProtocol } from '../../../domain/enums/TVProtocol';
 import { TVDiscoveryError } from '../../../domain/errors/TVDiscoveryError';
+import { IManualIPProber } from '../../../domain/interfaces/IManualIPProber';
 import { DiscoveryOptions } from '../../../domain/interfaces/ITVDiscoveryService';
-import { isLocalIPv4Address } from '../ssdp/SSDPParser';
+import { isLocalIPv4Address } from '../../../domain/utils/ipValidator';
 import { IDiscoveryStrategy } from './IDiscoveryStrategy';
 
 export type EndpointProber = (ipAddress: string, timeoutMs: number) => Promise<boolean>;
@@ -97,7 +98,7 @@ export interface ManualIPStrategyOptions {
  * Strategy to validate and probe a specific manual IP address entered by the user.
  * Avoids indiscriminate subnet scanning.
  */
-export class ManualIPDiscoveryStrategy implements IDiscoveryStrategy {
+export class ManualIPDiscoveryStrategy implements IDiscoveryStrategy, IManualIPProber {
   readonly id = 'manual-ip';
   private readonly prober: EndpointProber;
   private readonly probeTimeoutMs: number;

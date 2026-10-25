@@ -1,4 +1,4 @@
-import { Scheduler } from '../../../application/services/TVConnectionManager';
+import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { InstalledApp } from '../../../domain/entities/InstalledApp';
 import {
   createCapabilities,
@@ -44,7 +44,13 @@ export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 5000;
 export const MAX_CONSECUTIVE_HEARTBEAT_FAILURES = 2;
 
 const defaultScheduler: Scheduler = {
-  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  setTimeout: (fn, ms) => {
+    const handle = setTimeout(fn, ms);
+    if (handle && typeof handle === 'object' && typeof (handle as unknown as { unref?: () => void }).unref === 'function') {
+      (handle as unknown as { unref: () => void }).unref();
+    }
+    return handle;
+  },
   clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
@@ -604,6 +610,10 @@ export class LGWebOSAdapter
       return false;
     }
     const client = this.client;
+    // If native ping is not supported on this transport, use socket open state rather than failing
+    if (!client.isPingSupported()) {
+      return client.isOpen();
+    }
     let timer: unknown;
     try {
       await Promise.race([
@@ -627,6 +637,13 @@ export class LGWebOSAdapter
     this.stopHeartbeat();
     this.consecutiveHeartbeatFailures = 0;
     this.isHeartbeatPaused = false;
+    // Only schedule ping keepalive if underlying transport supports native ping
+    if (!this.client || !this.client.isPingSupported()) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[SmartRemote][Heartbeat] Ping unsupported by transport; ping heartbeat skipped');
+      }
+      return;
+    }
     this.scheduleNextHeartbeat(attempt);
   }
 
@@ -636,7 +653,8 @@ export class LGWebOSAdapter
       attempt !== this.attempt ||
       this.isHeartbeatPaused ||
       this.state !== TVConnectionState.Connected ||
-      !this.client
+      !this.client ||
+      !this.client.isPingSupported()
     ) {
       return;
     }
@@ -653,6 +671,7 @@ export class LGWebOSAdapter
       this.isHeartbeatPaused ||
       this.state !== TVConnectionState.Connected ||
       !this.client ||
+      !this.client.isPingSupported() ||
       this.heartbeatInFlight
     ) {
       return;
@@ -680,6 +699,16 @@ export class LGWebOSAdapter
       }
     } catch (e) {
       scheduler.clearTimeout(timer);
+      if (attempt !== this.attempt || this.client !== client) {
+        return;
+      }
+      if (e instanceof TVUnsupportedOperationError) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[SmartRemote][Heartbeat] Ping unsupported; stopping heartbeat loop without closing socket');
+        }
+        this.stopHeartbeat();
+        return;
+      }
       this.consecutiveHeartbeatFailures += 1;
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.warn(

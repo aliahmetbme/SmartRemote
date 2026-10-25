@@ -7,16 +7,10 @@ import {
   StyleProp,
   ViewStyle,
   PanResponder,
-  AppState,
 } from 'react-native';
-import { useAppSelector } from '../../store/hooks';
-import { selectCapabilities, selectConnectionStatus } from '../../store/selectors';
-import { TVConnectionState } from '../../domain/enums/TVConnectionState';
 import { useContainer } from '../context/ContainerContext';
-import {
-  MotionPointerController,
-  MotionDiagnosticData,
-} from '../controllers/MotionPointerController';
+import { useMotionPointer } from '../hooks/useMotionPointer';
+import { MotionDiagnosticData } from '../controllers/MotionPointerController';
 import { theme } from '../theme';
 
 export interface MotionSurfaceProps {
@@ -26,108 +20,26 @@ export interface MotionSurfaceProps {
 
 export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveChange }) => {
   const container = useContainer();
-  const capabilities = useAppSelector(selectCapabilities);
-  const connectionStatus = useAppSelector(selectConnectionStatus);
-
-  const isConnected = connectionStatus === TVConnectionState.Connected;
-  const pointerState = capabilities?.pointerControl ?? 'unknown';
-  const isPointerSupported = pointerState !== 'unsupported';
-
-  const [isSensorAvailable, setIsSensorAvailable] = useState<boolean | null>(null);
-  const [isAiming, setIsAiming] = useState<boolean>(false);
-  const [sensitivity, setSensitivity] = useState<number>(1.0);
-  const [invertX, setInvertX] = useState<boolean>(false);
-  const [invertY, setInvertY] = useState<boolean>(false);
-  const [isDiagMode, setIsDiagMode] = useState<boolean>(false);
-  const [diagData, setDiagData] = useState<MotionDiagnosticData | null>(null);
   const [recenterNotice, setRecenterNotice] = useState<boolean>(false);
-
-  const controllerRef = useRef<MotionPointerController | null>(null);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const controller = new MotionPointerController(
-      container.motionSensorService,
-      async (deltaX, deltaY) => {
-        if (!isConnected || !isPointerSupported) return;
-        await container.useCases.sendRemoteCommand.execute({
-          type: 'movePointer',
-          deltaX,
-          deltaY,
-        });
-      },
-      {
-        sensitivity,
-        invertX,
-        invertY,
-        diagnosticMode: isDiagMode,
-        onDiagnosticSample: setDiagData,
-      },
-    );
-    controllerRef.current = controller;
-
-    controller.start().then(available => {
-      if (isMounted) {
-        setIsSensorAvailable(available);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      controller.stop().catch(() => undefined);
-      controllerRef.current = null;
-    };
-    // Re-create controller if container or connection changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [container, isConnected, isPointerSupported]);
-
-  // Clean up parent scroll lock on unmount
-  useEffect(() => {
-    return () => {
-      onActiveChange?.(false);
-    };
-  }, [onActiveChange]);
-
-  // Clean up engagement on app backgrounding
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', nextState => {
-      if (nextState !== 'active') {
-        setIsAiming(false);
-        onActiveChange?.(false);
-        controllerRef.current?.setEngaged(false);
-      }
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, [onActiveChange]);
-
-  const handleSensitivityChange = (newVal: number) => {
-    const clamped = Math.max(0.4, Math.min(3.0, Number(newVal.toFixed(1))));
-    setSensitivity(clamped);
-    controllerRef.current?.setSensitivity(clamped);
-  };
-
-  const handleToggleInvertX = () => {
-    const next = !invertX;
-    setInvertX(next);
-    controllerRef.current?.setInvertX(next);
-  };
-
-  const handleToggleInvertY = () => {
-    const next = !invertY;
-    setInvertY(next);
-    controllerRef.current?.setInvertY(next);
-  };
-
-  const handleToggleDiag = () => {
-    const next = !isDiagMode;
-    setIsDiagMode(next);
-    controllerRef.current?.setDiagnosticMode(next);
-  };
-
   const recenterTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const {
+    isConnected,
+    isPointerSupported,
+    isSensorAvailable,
+    isAiming,
+    sensitivity,
+    setSensitivity,
+    invertX,
+    setInvertX,
+    invertY,
+    setInvertY,
+    isDiagMode,
+    setIsDiagMode,
+    diagData,
+    setEngaged,
+    recenter,
+  } = useMotionPointer({ onActiveChange });
 
   useEffect(() => {
     return () => {
@@ -137,8 +49,25 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
     };
   }, []);
 
+  const handleSensitivityChange = (newVal: number) => {
+    const clamped = Math.max(0.4, Math.min(3.0, Number(newVal.toFixed(1))));
+    setSensitivity(clamped);
+  };
+
+  const handleToggleInvertX = () => {
+    setInvertX(!invertX);
+  };
+
+  const handleToggleInvertY = () => {
+    setInvertY(!invertY);
+  };
+
+  const handleToggleDiag = () => {
+    setIsDiagMode(!isDiagMode);
+  };
+
   const handleRecenter = () => {
-    controllerRef.current?.recenter();
+    recenter();
     setRecenterNotice(true);
     if (recenterTimeoutRef.current) {
       clearTimeout(recenterTimeoutRef.current);
@@ -168,24 +97,18 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
 
       onPanResponderGrant: () => {
         if (!canAim) return;
-        setIsAiming(true);
-        onActiveChange?.(true);
-        controllerRef.current?.setEngaged(true);
+        setEngaged(true);
       },
 
       onPanResponderRelease: () => {
-        setIsAiming(false);
-        onActiveChange?.(false);
-        controllerRef.current?.setEngaged(false);
+        setEngaged(false);
       },
 
       onPanResponderTerminate: () => {
-        setIsAiming(false);
-        onActiveChange?.(false);
-        controllerRef.current?.setEngaged(false);
+        setEngaged(false);
       },
     });
-  }, [canAim, onActiveChange]);
+  }, [canAim, setEngaged]);
 
   return (
     <View style={[styles.container, style]} testID="motion-surface">

@@ -5,11 +5,9 @@ import { TVConnectionError, TVTimeoutError } from '../../domain/errors/TVConnect
 import { TVPairingError } from '../../domain/errors/TVPairingError';
 import { ITVAdapterFactory } from '../../domain/interfaces/ITVAdapterFactory';
 import { ITVRemoteAdapter } from '../../domain/interfaces/ITVRemoteAdapter';
+import { IScheduler, Scheduler } from '../../domain/interfaces/IScheduler';
 
-export interface Scheduler {
-  setTimeout(fn: () => void, ms: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
+export type { IScheduler, Scheduler };
 
 const defaultScheduler: Scheduler = {
   setTimeout: (fn, ms) => setTimeout(fn, ms),
@@ -78,8 +76,10 @@ export class TVConnectionManager {
   private unsubscribeAdapter: (() => void) | null = null;
   private retryTimer: unknown = null;
   private retryCount = 0;
-  /** True after a successful connection until the user disconnects explicitly. */
+  /** True when a device is targeted until the user disconnects explicitly. */
   private shouldRestore = false;
+  private isBackgrounded = false;
+  private isForegroundHandling = false;
 
   constructor(
     private readonly adapterFactory: ITVAdapterFactory,
@@ -134,6 +134,7 @@ export class TVConnectionManager {
     }
 
     this.targetDevice = device;
+    this.shouldRestore = true;
     const generation = this.beginOperation();
     const connectPromise = (async () => {
       try {
@@ -166,6 +167,7 @@ export class TVConnectionManager {
     if (this.inFlight) {
       return this.inFlight;
     }
+    this.shouldRestore = true;
     const device = this.device;
     const generation = this.beginOperation();
     const reconnectPromise = (async () => {
@@ -192,9 +194,27 @@ export class TVConnectionManager {
 
   /** Call when the app returns to the foreground. */
   async handleAppForeground(): Promise<void> {
-    if (this.state === TVConnectionState.Connected && this.adapter) {
-      try {
-        const isHealthy = (await this.adapter.checkLiveness?.()) ?? true;
+    this.isBackgrounded = false;
+
+    if (this.isForegroundHandling) {
+      return;
+    }
+    this.isForegroundHandling = true;
+
+    try {
+      if (this.state === TVConnectionState.Connected && this.adapter) {
+        let isHealthy = false;
+        try {
+          isHealthy = (await this.adapter.checkLiveness?.()) ?? true;
+        } catch {
+          isHealthy = false;
+        }
+
+        // If the app was moved back to background while awaiting liveness, abort
+        if (this.isBackgrounded) {
+          return;
+        }
+
         if (isHealthy) {
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[SmartRemote][AppState] Socket verified healthy upon returning to foreground');
@@ -202,36 +222,49 @@ export class TVConnectionManager {
           this.adapter.resumeHeartbeat?.();
           return;
         }
-      } catch {
-        // Liveness check failed, fall through to reconnect
-      }
-    }
 
-    const needsReconnect =
-      this.state === TVConnectionState.Disconnected ||
-      this.state === TVConnectionState.Error ||
-      this.state === TVConnectionState.Reconnecting;
-    if (this.shouldRestore && this.device && needsReconnect && !this.inFlight) {
-      this.clearRetryTimer();
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`[SmartRemote][AppState] Foreground reconnecting to device ${this.device.id}`);
+        // Socket is unhealthy: transition from Connected to Reconnecting
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[SmartRemote][AppState] Socket liveness check failed upon foreground; initiating recovery');
+        }
+        this.setState(TVConnectionState.Reconnecting);
       }
-      this.reconnect().catch(() => undefined);
+
+      const needsReconnect =
+        this.state === TVConnectionState.Disconnected ||
+        this.state === TVConnectionState.Error ||
+        this.state === TVConnectionState.Reconnecting;
+
+      if (this.shouldRestore && this.device && needsReconnect && !this.inFlight) {
+        this.clearRetryTimer();
+        this.retryCount = 0;
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log(`[SmartRemote][AppState] Foreground reconnecting to device ${this.device.id}`);
+        }
+        await this.reconnect().catch(() => undefined);
+      }
+    } finally {
+      this.isForegroundHandling = false;
     }
   }
 
   /** Call when the app moves to the background: pending retries are dropped, session is released. */
   handleAppBackground(): void {
+    this.isBackgrounded = true;
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       console.log('[SmartRemote][AppState] App moved to background');
     }
-    if (this.state === TVConnectionState.Reconnecting) {
-      this.beginOperation();
+    this.clearRetryTimer();
+    this.adapter?.pauseHeartbeat?.();
+
+    if (this.state === TVConnectionState.Reconnecting || this.state === TVConnectionState.Connecting) {
+      const gen = this.beginOperation();
       this.teardown().then(() => {
-        this.setState(TVConnectionState.Disconnected);
+        if (gen === this.generation) {
+          this.setState(TVConnectionState.Disconnected);
+        }
       });
     }
-    this.adapter?.pauseHeartbeat?.();
   }
 
   // ---- internals ----
@@ -384,6 +417,18 @@ export class TVConnectionManager {
     this.adapter = null;
     this.capabilities = null;
     adapter?.disconnect().catch(() => undefined);
+
+    if (this.isBackgrounded) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log(
+          '[SmartRemote][AppState] Connection lost while backgrounded; releasing session without scheduling background retry',
+        );
+      }
+      this.clearRetryTimer();
+      this.setState(TVConnectionState.Disconnected);
+      return;
+    }
+
     this.setState(TVConnectionState.Reconnecting);
     this.scheduleRetry(generation);
   }
