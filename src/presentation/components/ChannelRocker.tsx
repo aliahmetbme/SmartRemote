@@ -1,4 +1,5 @@
 import React from 'react';
+import { theme, useRemoteDensity } from '../theme';
 import { View, Text, TouchableOpacity, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 
 export interface ChannelRockerProps {
@@ -6,6 +7,8 @@ export interface ChannelRockerProps {
   onChannelDown: () => void;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
+  width?: number;
+  height?: number;
 }
 
 export const ChannelRocker: React.FC<ChannelRockerProps> = ({
@@ -13,11 +16,15 @@ export const ChannelRocker: React.FC<ChannelRockerProps> = ({
   onChannelDown,
   disabled = false,
   style,
+  width = 66,
+  height = 196,
 }) => {
+  const density = useRemoteDensity();
   return (
-    <View style={[styles.rockerColumn, style]} testID="channel-rocker">
+    <View style={[styles.rockerColumn, { width, height }, density && { borderRadius: density.smallControlRadius, borderWidth: density.borderWidth }, style]} testID="channel-rocker">
       <TouchableOpacity
         style={[styles.rockerButton, styles.rockerTop, disabled && styles.controlDisabled]}
+        accessibilityState={{ disabled: disabled }}
         disabled={disabled}
         onPress={onChannelUp}
         testID="btn-ch-up"
@@ -33,6 +40,7 @@ export const ChannelRocker: React.FC<ChannelRockerProps> = ({
 
       <TouchableOpacity
         style={[styles.rockerButton, styles.rockerBottom, disabled && styles.controlDisabled]}
+        accessibilityState={{ disabled: disabled }}
         disabled={disabled}
         onPress={onChannelDown}
         testID="btn-ch-down"
@@ -57,6 +65,8 @@ const styles = StyleSheet.create({
   },
   rockerButton: {
     flex: 1,
+    minHeight: 48,
+    paddingHorizontal: 4,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -80,11 +90,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#3B455E',
   },
   rockerLabel: {
-    fontSize: 12,
+    textAlign: 'center',
+    fontSize: 11,
     fontWeight: '700',
-    color: '#B6BECE',
+    color: theme.colors.controlLabel,
   },
   controlDisabled: {
-    opacity: 0.45,
+    opacity: theme.remoteDisabledOpacity,
   },
 });

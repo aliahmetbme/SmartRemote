@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { StyleProp, ViewStyle } from 'react-native';
 import { useContainer } from '../context/ContainerContext';
 import { useAppSelector } from '../../store/hooks';
-import { selectCapabilities, selectConnectionStatus } from '../../store/selectors';
+import { selectCapabilities, selectConnectionStatus, selectSelectedDeviceId } from '../../store/selectors';
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
 import { RemoteKey } from '../../domain/enums/RemoteKey';
 import { useNumericKeypadBuffer } from '../hooks/useNumericKeypadBuffer';
@@ -15,6 +15,7 @@ export interface NumericKeypadProps {
   onSendKey?: (key: RemoteKey) => Promise<void>;
   isConnected?: boolean;
   isAvailable?: boolean;
+  targetDeviceId?: string | null;
 }
 
 /**
@@ -28,10 +29,15 @@ export const NumericKeypad: React.FC<NumericKeypadProps> = ({
   onSendKey: customOnSendKey,
   isConnected: customIsConnected,
   isAvailable: customIsAvailable,
+  targetDeviceId: customTargetDeviceId,
 }) => {
   const container = useContainer();
   const connectionStatus = useAppSelector(selectConnectionStatus);
   const capabilities = useAppSelector(selectCapabilities);
+  const selectedDeviceId = useAppSelector(selectSelectedDeviceId);
+
+  const targetDeviceId =
+    customTargetDeviceId !== undefined ? customTargetDeviceId : selectedDeviceId;
 
   const isConnected =
     customIsConnected !== undefined
@@ -68,6 +74,7 @@ export const NumericKeypad: React.FC<NumericKeypadProps> = ({
     isAvailable,
     isConnected,
     bufferTimeoutMs,
+    targetDeviceId,
   });
 
   return (

@@ -9,13 +9,14 @@ export class RestoreLastTVUseCase {
     private readonly repository: ITVDeviceRepository,
   ) {}
 
-  async execute(): Promise<TVDevice | null> {
+  async execute(isCurrent: () => boolean = () => true): Promise<TVDevice | null> {
+    const revision = this.manager.getOperationRevision();
     const id = await this.repository.getLastSelectedId();
     if (!id) {
       return null;
     }
     const device = await this.repository.getById(id);
-    if (!device) {
+    if (!device || !isCurrent() || this.manager.getOperationRevision() !== revision) {
       return null;
     }
     await this.manager.connect(device);

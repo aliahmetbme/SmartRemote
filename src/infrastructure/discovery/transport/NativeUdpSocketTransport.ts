@@ -38,6 +38,8 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
   private readonly driver: INativeUdpDriver | null;
   private nativeSubscription: { remove(): void } | null = null;
   private isBound = false;
+  private errorSubscription: { remove(): void } | null = null;
+  private errorListeners = new Set<(error: Error) => void>();
 
   constructor(driver?: INativeUdpDriver | null) {
     this.driver = driver ?? null;
@@ -104,13 +106,24 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
         },
       );
 
+      this.errorSubscription = emitter.addListener('onUdpError', (event: { error?: string }) => {
+        const error = new TVDiscoveryError(
+          event.error ?? "TV discovery interrupted. Check Wi-Fi and local network access in app Settings.", 'network_unavailable',
+        );
+        this.errorListeners.forEach(listener => listener(error));
+      });
       const boundPort = await nativeModule.bind(port);
       this.isBound = true;
       return boundPort;
     } catch (error) {
       this.nativeSubscription?.remove();
       this.nativeSubscription = null;
-      throw new TVDiscoveryError('Failed to bind native UDP socket', 'network_unavailable', error);
+      this.errorSubscription?.remove();
+      this.errorSubscription = null;
+      throw new TVDiscoveryError(
+        `Could not start TV discovery. Connect to the TV's Wi-Fi network and check local network access in app Settings. ${error instanceof Error ? error.message : ''}`,
+        'network_unavailable', error,
+      );
     }
   }
 
@@ -190,8 +203,16 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
     };
   }
 
+  onError(listener: (error: Error) => void): () => void {
+    this.errorListeners.add(listener);
+    return () => { this.errorListeners.delete(listener); };
+  }
+
   async close(): Promise<void> {
     this.isBound = false;
+    this.errorSubscription?.remove();
+    this.errorSubscription = null;
+    this.errorListeners.clear();
     this.nativeSubscription?.remove();
     this.nativeSubscription = null;
     this.listeners.clear();

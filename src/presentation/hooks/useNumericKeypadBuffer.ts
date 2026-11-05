@@ -7,6 +7,7 @@ export interface UseNumericKeypadBufferOptions {
   isAvailable?: boolean;
   isConnected?: boolean;
   bufferTimeoutMs?: number;
+  targetDeviceId?: string | null;
 }
 
 export interface UseNumericKeypadBufferResult {
@@ -14,11 +15,19 @@ export interface UseNumericKeypadBufferResult {
   handleDigit: (digit: number) => void;
   handleBackspace: () => void;
   handleOk: () => void;
+  /** Exposed for testing and verification of the internal FIFO queue */
+  flushQueue?: () => Promise<void>;
 }
 
 /**
  * Custom hook isolating numeric channel buffering, timeout clearing,
  * and FIFO sequential promise queuing from UI rendering.
+ *
+ * Guarantees:
+ * - State updaters are 100% pure (zero side-effects inside setState).
+ * - Immediate synchronous logical buffer tracking via useRef prevents stale reads on rapid taps.
+ * - Sequential FIFO promise queue prevents race conditions and handles failures gracefully without poison.
+ * - Generation-based invalidation prevents stale operations across TV device switches or unmount.
  */
 export function useNumericKeypadBuffer(
   options: UseNumericKeypadBufferOptions,
@@ -29,13 +38,24 @@ export function useNumericKeypadBuffer(
     isAvailable = true,
     isConnected = true,
     bufferTimeoutMs = 3500,
+    targetDeviceId,
   } = options;
 
+  // Authoritative synchronous logical buffer for immediate event handler reads
+  const bufferRef = useRef<string>('');
+
+  // React state for rendering UI
   const [channelBuffer, setChannelBuffer] = useState<string>('');
+
   const bufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // FIFO sequential promise queue to preserve digit ordering during rapid taps
+  // FIFO sequential promise queue to preserve command ordering during rapid taps
   const queueRef = useRef<Promise<void>>(Promise.resolve());
+
+  // Generation counter to invalidate pending asynchronous tasks on device switch or unmount
+  const generationRef = useRef<number>(0);
+
+  const isMountedRef = useRef<boolean>(true);
 
   const onSendDigitRef = useRef(onSendDigit);
   onSendDigitRef.current = onSendDigit;
@@ -49,112 +69,172 @@ export function useNumericKeypadBuffer(
   const isConnectedRef = useRef(isConnected);
   isConnectedRef.current = isConnected;
 
+  const clearTimer = useCallback(() => {
+    if (bufferTimeoutRef.current) {
+      clearTimeout(bufferTimeoutRef.current);
+      bufferTimeoutRef.current = null;
+    }
+  }, []);
+
+  const startTimer = useCallback(() => {
+    clearTimer();
+    bufferTimeoutRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      bufferRef.current = '';
+      setChannelBuffer('');
+    }, bufferTimeoutMs);
+  }, [bufferTimeoutMs, clearTimer]);
+
   const enqueue = useCallback((commandFn: () => Promise<void>) => {
-    queueRef.current = queueRef.current.then(
-      () => commandFn(),
-      () => commandFn(), // continue queue execution even if a prior command failed
-    );
+    // Chain sequentially, ensuring prior rejections never break the queue
+    queueRef.current = queueRef.current
+      .catch(() => {})
+      .then(async () => {
+        try {
+          await commandFn();
+        } catch {
+          // Non-fatal command failure, queue remains healthy
+        }
+      });
     return queueRef.current;
   }, []);
 
-  // Clean up buffer timer on unmount
+  // Invalidate pending queue tasks and reset buffer on TV device change
+  const lastTargetDeviceIdRef = useRef<string | null | undefined>(targetDeviceId);
   useEffect(() => {
+    if (
+      lastTargetDeviceIdRef.current !== undefined &&
+      lastTargetDeviceIdRef.current !== targetDeviceId
+    ) {
+      generationRef.current += 1;
+      clearTimer();
+      bufferRef.current = '';
+      setChannelBuffer('');
+      queueRef.current = Promise.resolve();
+    }
+    lastTargetDeviceIdRef.current = targetDeviceId;
+  }, [clearTimer, targetDeviceId]);
+
+  // Invalidate pending tasks and reset buffer if connection drops
+  const prevConnectedRef = useRef<boolean>(isConnected);
+  useEffect(() => {
+    if (prevConnectedRef.current && !isConnected) {
+      generationRef.current += 1;
+      clearTimer();
+      bufferRef.current = '';
+      setChannelBuffer('');
+      queueRef.current = Promise.resolve();
+    }
+    prevConnectedRef.current = isConnected;
+  }, [clearTimer, isConnected]);
+
+  // Lifecycle mount / unmount cleanup
+  useEffect(() => {
+    isMountedRef.current = true;
     return () => {
-      if (bufferTimeoutRef.current) {
-        clearTimeout(bufferTimeoutRef.current);
-      }
+      isMountedRef.current = false;
+      generationRef.current += 1;
+      clearTimer();
     };
-  }, []);
+  }, [clearTimer]);
 
   const handleDigit = useCallback(
     (digit: number) => {
-      if (!isAvailableRef.current) return;
+      if (!isAvailableRef.current || !isConnectedRef.current) return;
 
-      if (bufferTimeoutRef.current) {
-        clearTimeout(bufferTimeoutRef.current);
-      }
-      bufferTimeoutRef.current = setTimeout(() => {
-        setChannelBuffer('');
-      }, bufferTimeoutMs);
+      startTimer();
 
-      setChannelBuffer(prev => (prev.length >= 4 ? String(digit) : prev + digit));
+      // Synchronous logical buffer update
+      const prev = bufferRef.current;
+      const next = prev.length >= 4 ? String(digit) : prev + digit;
+      bufferRef.current = next;
 
+      // Pure state update (no side effects)
+      setChannelBuffer(next);
+
+      const gen = generationRef.current;
       enqueue(async () => {
+        if (gen !== generationRef.current || !isMountedRef.current) return;
         try {
           await onSendDigitRef.current(digit);
         } catch {
-          // Non-fatal command failure
+          // Handled non-fatal command failure
         }
       });
     },
-    [bufferTimeoutMs, enqueue],
+    [enqueue, startTimer],
   );
-
-  const handleOk = useCallback(() => {
-    if (!isConnectedRef.current) return;
-
-    if (bufferTimeoutRef.current) {
-      clearTimeout(bufferTimeoutRef.current);
-    }
-    setChannelBuffer('');
-
-    enqueue(async () => {
-      try {
-        await onSendKeyRef.current(RemoteKey.Ok);
-      } catch {
-        // Non-fatal command failure
-      }
-    });
-  }, [enqueue]);
 
   const handleBackspace = useCallback(() => {
     if (!isConnectedRef.current) return;
 
-    if (bufferTimeoutRef.current) {
-      clearTimeout(bufferTimeoutRef.current);
-    }
+    clearTimer();
 
-    setChannelBuffer(prev => {
-      if (prev.length <= 1) {
-        // Buffer now empty or was already empty: send BACK to dismiss TV channel banner
-        enqueue(async () => {
-          try {
-            await onSendKeyRef.current(RemoteKey.Back);
-          } catch {
-            // Non-fatal command failure
-          }
-        });
-        return '';
-      }
+    const current = bufferRef.current;
+    const gen = generationRef.current;
 
+    if (current.length <= 1) {
+      // Buffer was empty or had 1 digit: buffer becomes empty, send BACK to dismiss TV banner
+      bufferRef.current = '';
+      setChannelBuffer('');
+
+      enqueue(async () => {
+        if (gen !== generationRef.current || !isMountedRef.current) return;
+        try {
+          await onSendKeyRef.current(RemoteKey.Back);
+        } catch {
+          // Handled non-fatal command failure
+        }
+      });
+    } else {
       // Buffer had 2+ digits (e.g. "12"): pop last digit ("1")
-      const remaining = prev.slice(0, -1);
+      const remaining = current.slice(0, -1);
+      bufferRef.current = remaining;
+      setChannelBuffer(remaining);
+
+      // Restart inactivity timer for remaining buffer
+      startTimer();
 
       // Dismiss TV's current multi-digit prompt and resend remaining digits
       enqueue(async () => {
+        if (gen !== generationRef.current || !isMountedRef.current) return;
         try {
           await onSendKeyRef.current(RemoteKey.Back);
           for (const char of remaining) {
+            if (gen !== generationRef.current || !isMountedRef.current) return;
             const d = parseInt(char, 10);
             await onSendDigitRef.current(d);
           }
         } catch {
-          // Non-fatal command failure
+          // Handled non-fatal command failure
         }
       });
+    }
+  }, [clearTimer, enqueue, startTimer]);
 
-      bufferTimeoutRef.current = setTimeout(() => {
-        setChannelBuffer('');
-      }, bufferTimeoutMs);
+  const handleOk = useCallback(() => {
+    if (!isConnectedRef.current) return;
 
-      return remaining;
+    clearTimer();
+    bufferRef.current = '';
+    setChannelBuffer('');
+
+    const gen = generationRef.current;
+    enqueue(async () => {
+      if (gen !== generationRef.current || !isMountedRef.current) return;
+      try {
+        await onSendKeyRef.current(RemoteKey.Ok);
+      } catch {
+        // Handled non-fatal command failure
+      }
     });
-  }, [bufferTimeoutMs, enqueue]);
+  }, [clearTimer, enqueue]);
 
   return {
     channelBuffer,
     handleDigit,
     handleBackspace,
     handleOk,
+    flushQueue: () => queueRef.current,
   };
 }

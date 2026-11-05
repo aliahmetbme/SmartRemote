@@ -29,6 +29,7 @@ export interface PowerTVOptions extends WakeTVExecutionOptions {
  *   - If MAC is missing/invalid: prompts for MAC address configuration.
  */
 export class PowerTVUseCase {
+  private powerOffInFlight?: { revision: number; promise: Promise<void> };
   constructor(
     private readonly connectionManager: TVConnectionManager,
     private readonly sendRemoteCommand: SendRemoteCommandUseCase,
@@ -43,7 +44,17 @@ export class PowerTVUseCase {
 
     // 1. If TV is currently connected, execute SSAP powerOff
     if (isConnected) {
-      await this.sendRemoteCommand.execute({ type: 'powerOff' });
+      if (targetDevice && this.connectionManager.getDevice()?.id !== targetDevice.id) {
+        throw new TVConnectionError('Power target changed', 'cancelled');
+      }
+      const revision = this.connectionManager.getOperationRevision();
+      if (this.powerOffInFlight?.revision !== revision) {
+        const promise = this.sendRemoteCommand.execute({ type: 'powerOff' }).finally(() => {
+          if (this.powerOffInFlight?.promise === promise) this.powerOffInFlight = undefined;
+        });
+        this.powerOffInFlight = { revision, promise };
+      }
+      await this.powerOffInFlight.promise;
       return {
         action: 'powerOff',
         success: true,

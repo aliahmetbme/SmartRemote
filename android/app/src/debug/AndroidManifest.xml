@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Target 36 uses the INTERNET implicit LAN grant. RN 0.88 adds this for Metro
+         without checking targetSdk. Restore the declaration when migrating to target 37,
+         together with runtime permission handling for discovery/manual IP/reconnect. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" tools:node="remove" />
+</manifest>

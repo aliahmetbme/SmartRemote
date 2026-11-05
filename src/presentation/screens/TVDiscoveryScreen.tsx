@@ -9,6 +9,7 @@ import {
   Modal,
   StyleSheet,
   Platform,
+  AppState,
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,11 +34,12 @@ import { isLocalIPv4Address } from '../../domain/utils/ipValidator';
 import { formatIpAddress } from '../utils/ipFormatter';
 import { tvActions } from '../../store/slices/tvSlice';
 import { useContainer } from '../context/ContainerContext';
-import { theme } from '../theme';
+import { theme, usePresentationLayout, platformPresentation } from '../theme';
 
 export const TVDiscoveryScreen: React.FC = () => {
   const container = useContainer();
   const insets = useSafeAreaInsets();
+  const layout = usePresentationLayout(insets.left + insets.right);
 
   const discoveryStatus = useAppSelector(selectDiscoveryStatus);
   const discoveryError = useAppSelector(selectDiscoveryError);
@@ -51,15 +53,18 @@ export const TVDiscoveryScreen: React.FC = () => {
   const [ipError, setIpError] = useState<string | null>(null);
   const [isProbingIp, setIsProbingIp] = useState(false);
 
-  // Hydrate saved devices from persistent storage on mount if store is empty
+  // Hydrate saved devices from authoritative hydration use case on mount if store is empty
   useEffect(() => {
     let isMounted = true;
     if (savedDevices.length === 0) {
-      container.deviceRepository
-        .getAll()
-        .then(devices => {
+      container.useCases.hydrateDevices
+        .execute()
+        .then(({ savedDevices: devices, selectedDeviceId }) => {
           if (isMounted && devices.length > 0) {
             container.store.dispatch(tvActions.savedDevicesLoaded(devices));
+            if (selectedDeviceId && !activeDeviceId) {
+              container.store.dispatch(tvActions.deviceSelected(selectedDeviceId));
+            }
           }
         })
         .catch(() => undefined);
@@ -67,7 +72,7 @@ export const TVDiscoveryScreen: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [container, savedDevices.length]);
+  }, [activeDeviceId, container.store, container.useCases.hydrateDevices, savedDevices.length]);
 
   if (typeof __DEV__ !== 'undefined' && __DEV__) {
     // Non-sensitive dev diagnostics
@@ -75,6 +80,16 @@ export const TVDiscoveryScreen: React.FC = () => {
       `[SmartRemote][DiscoveryScreen] Rendered with ${savedDevices.length} saved TV(s), activeId='${activeDeviceId}', status='${connectionStatus}'`,
     );
   }
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') container.discoveryManager.cancelDiscovery();
+    });
+    return () => {
+      subscription.remove();
+      container.discoveryManager.cancelDiscovery();
+    };
+  }, [container.discoveryManager]);
 
   const isScanning = discoveryStatus === 'scanning';
   const isConnecting = connectionStatus === TVConnectionState.Connecting;
@@ -100,8 +115,9 @@ export const TVDiscoveryScreen: React.FC = () => {
         msg.toLowerCase().includes('prohibited') ||
         msg.includes('1009')
       ) {
-        msg =
-          'Local network access is prohibited. Please open iOS Settings > Privacy & Security > Local Network and ensure SmartRemote is enabled.';
+        msg = Platform.OS === 'ios'
+          ? 'Local network access is prohibited. Please open iOS Settings > Privacy & Security > Local Network and ensure SmartRemote is enabled.'
+          : 'Local network access is unavailable. Connect to the same Wi-Fi as the TV and check VPN, firewall and app network restrictions in Android Settings, then retry.';
       }
       Alert.alert('Connection Failed', msg);
     }
@@ -188,8 +204,9 @@ export const TVDiscoveryScreen: React.FC = () => {
         msg.toLowerCase().includes('prohibited') ||
         msg.includes('1009')
       ) {
-        msg =
-          'Local network access is prohibited. Please open iOS Settings > Privacy & Security > Local Network and ensure SmartRemote is enabled.';
+        msg = Platform.OS === 'ios'
+          ? 'Local network access is prohibited. Please open iOS Settings > Privacy & Security > Local Network and ensure SmartRemote is enabled.'
+          : 'Local network access is unavailable. Connect to the same Wi-Fi as the TV and check VPN, firewall and app network restrictions in Android Settings, then retry.';
       }
       setIpError(msg);
       Alert.alert('Connection Failed', msg);
@@ -210,7 +227,7 @@ export const TVDiscoveryScreen: React.FC = () => {
         connectionStatus === TVConnectionState.Pairing);
 
     return (
-      <View style={styles.deviceCard} key={device.id} testID={`device-item-${device.id}`}>
+      <View style={[styles.deviceCard, layout.stackDetails && styles.stacked]} key={device.id} testID={`device-item-${device.id}`}>
         <View style={styles.deviceInfo}>
           <View style={styles.deviceHeaderRow}>
             {isSaved && (
@@ -270,9 +287,16 @@ export const TVDiscoveryScreen: React.FC = () => {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16) }]} testID="discovery-screen">
+    <View style={[styles.container, { paddingTop: Math.max(insets.top, 16), paddingLeft: layout.pagePadding + insets.left, paddingRight: layout.pagePadding + insets.right }]} testID="discovery-screen">
+      {/* Discovered / Saved Device Lists */}
+      <FlatList
+        data={discoveredDevices}
+        keyExtractor={item => item.id}
+        renderItem={({ item }) => renderDeviceItem(item, false)}
+        ListHeaderComponent={
+          <>
       {/* Header Actions */}
-      <View style={styles.header}>
+      <View style={[styles.header, layout.headerStacked && styles.stacked]}>
         <Text style={styles.headerTitle}>TV Discovery</Text>
         <TouchableOpacity
           style={[styles.scanButton, isScanning && styles.scanningButton]}
@@ -304,7 +328,7 @@ export const TVDiscoveryScreen: React.FC = () => {
 
       {/* Manual IP Section (Prominent on iOS) */}
       <View style={styles.sectionCard}>
-        <View style={styles.sectionHeaderRow}>
+        <View style={[styles.sectionHeaderRow, layout.headerStacked && styles.stacked]}>
           <Text style={styles.sectionHeader}>Connect via IP Address</Text>
           {Platform.OS === 'ios' && (
             <View style={styles.recommendedBadge}>
@@ -317,9 +341,9 @@ export const TVDiscoveryScreen: React.FC = () => {
             ? 'Direct WebSocket connection and pairing for LG Smart TVs'
             : 'Enter TV IP address directly (e.g. 192.168.1.50)'}
         </Text>
-        <View style={styles.manualIpRow}>
+        <View style={[styles.manualIpRow, layout.stackForms && styles.stacked]}>
           <TextInput
-            style={[styles.ipInput, ipError ? styles.ipInputError : null]}
+            style={[styles.ipInput, layout.stackForms && styles.fullWidthInput, ipError ? styles.ipInputError : null]}
             placeholder="192.168.1.50"
             placeholderTextColor={theme.colors.textMuted}
             value={manualIp}
@@ -327,6 +351,8 @@ export const TVDiscoveryScreen: React.FC = () => {
             keyboardType="decimal-pad"
             autoCapitalize="none"
             autoCorrect={false}
+            accessibilityLabel="TV IP address"
+            returnKeyType="done"
             testID="manual-ip-input"
           />
           <TouchableOpacity
@@ -336,6 +362,9 @@ export const TVDiscoveryScreen: React.FC = () => {
             ]}
             disabled={!manualIp.trim() || !!ipError || isProbingIp}
             onPress={handleManualConnect}
+            accessibilityRole="button"
+            accessibilityLabel="Connect to TV IP address"
+            accessibilityState={{ disabled: !manualIp.trim() || !!ipError || isProbingIp, busy: isProbingIp }}
             testID="manual-ip-connect-btn"
           >
             {isProbingIp ? (
@@ -362,7 +391,9 @@ export const TVDiscoveryScreen: React.FC = () => {
             <TouchableOpacity
               onPress={() => container.store.dispatch(tvActions.discoveryErrorDismissed())}
               testID="dismiss-discovery-error-btn"
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.dismissErrorButton}
+              accessibilityLabel="Dismiss discovery error"
+              accessibilityRole="button"
             >
               <Text style={styles.dismissErrorText}>✕</Text>
             </TouchableOpacity>
@@ -388,13 +419,7 @@ export const TVDiscoveryScreen: React.FC = () => {
         </View>
       ) : null}
 
-      {/* Discovered / Saved Device Lists */}
-      <FlatList
-        data={discoveredDevices}
-        keyExtractor={item => item.id}
-        renderItem={({ item }) => renderDeviceItem(item, false)}
-        ListHeaderComponent={
-          <>
+
             {savedDevices.length > 0 && (
               <View style={styles.listSection}>
                 <Text style={styles.listSectionTitle}>Saved TVs</Text>
@@ -406,6 +431,7 @@ export const TVDiscoveryScreen: React.FC = () => {
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer} testID="discovery-empty">
+            <Text style={styles.emptyTitle}>{isScanning ? 'Scanning your network' : 'No TVs found yet'}</Text>
             <Text style={styles.emptyText}>
               {isScanning
                 ? 'Searching local Wi-Fi network for LG Smart TVs...'
@@ -417,6 +443,10 @@ export const TVDiscoveryScreen: React.FC = () => {
             </Text>
           </View>
         }
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={platformPresentation.keyboardDismissMode}
+        automaticallyAdjustKeyboardInsets
+        contentInsetAdjustmentBehavior="never"
         contentContainerStyle={styles.listContent}
       />
 
@@ -440,10 +470,15 @@ export const TVDiscoveryScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  stacked: { flexDirection: 'column', alignItems: 'stretch', gap: 8 },
+  fullWidthInput: { flex: undefined, width: '100%' },
+  emptyTitle: { ...theme.typography.subtitle, color: theme.colors.textSecondary, textAlign: 'center', marginBottom: 8 },
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
-    paddingHorizontal: theme.spacing.md,
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
   },
   header: {
     flexDirection: 'row',
@@ -453,11 +488,15 @@ const styles = StyleSheet.create({
     paddingTop: theme.spacing.xs,
   },
   headerTitle: {
+    flexShrink: 1,
     ...theme.typography.title,
     color: theme.colors.textPrimary,
-    fontSize: 22,
+    fontSize: 20,
   },
   scanButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: theme.colors.surfaceHighlight,
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.sm,
@@ -553,10 +592,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   discoveryErrorTitle: {
+    flex: 1,
+    minWidth: 0,
     fontSize: 13,
     fontWeight: '700',
     color: '#FF6B6B',
   },
+  dismissErrorButton: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   dismissErrorText: {
     fontSize: 14,
     color: '#FF9E9E',
@@ -576,10 +618,13 @@ const styles = StyleSheet.create({
   },
   manualIpRow: {
     flexDirection: 'row',
+    gap: 8,
     alignItems: 'center',
   },
   ipInput: {
     flex: 1,
+    minWidth: 0,
+    minHeight: 48,
     backgroundColor: '#181C26',
     color: theme.colors.textPrimary,
     paddingHorizontal: theme.spacing.md,
@@ -587,13 +632,14 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: '#2A3142',
-    marginRight: theme.spacing.sm,
-    fontSize: 15,
+    fontSize: 16,
   },
   ipInputError: {
     borderColor: theme.colors.error,
   },
   manualConnectButton: {
+    minWidth: 100,
+    minHeight: 48,
     backgroundColor: theme.colors.primary,
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: 10,
@@ -634,6 +680,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   listContent: {
+    flexGrow: 1,
     paddingBottom: theme.spacing.xl,
   },
   deviceCard: {
@@ -672,6 +719,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#6B7280',
   },
   deviceName: {
+    flex: 1,
+    minWidth: 0,
     ...theme.typography.subtitle,
     color: theme.colors.textPrimary,
     marginBottom: 0,
@@ -681,6 +730,8 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
   },
   actionButton: {
+    minHeight: 48,
+    justifyContent: 'center',
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.sm,
     borderRadius: theme.borderRadius.full,
@@ -706,7 +757,13 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   emptyContainer: {
-    padding: theme.spacing.xl,
+    minHeight: 160,
+    justifyContent: 'center',
+    padding: theme.spacing.lg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
     alignItems: 'center',
   },
   emptyText: {

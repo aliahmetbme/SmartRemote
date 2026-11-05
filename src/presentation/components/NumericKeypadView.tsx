@@ -7,7 +7,7 @@ import {
   StyleProp,
   ViewStyle,
 } from 'react-native';
-import { theme } from '../theme';
+import { theme, usePresentationLayout, useRemoteDensity, layoutTokens } from '../theme';
 
 export interface NumericKeypadViewProps {
   channelBuffer: string;
@@ -32,10 +32,20 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
   onOkPress,
   style,
 }) => {
+  const { fontScale } = usePresentationLayout();
+  const density = useRemoteDensity();
+  const keyHeight = Math.max(layoutTokens.minimumTouchTarget, Math.ceil(24 * fontScale + (density ? 8 : 20)));
+  const keyStyle = [styles.keyButton, { minHeight: keyHeight }, density && {
+    borderRadius: density.tileRadius,
+    paddingVertical: density.displayPadding,
+    paddingHorizontal: density.keyHorizontalPadding,
+  }];
+  const rowStyle = [styles.row, density && [styles.compactSpacing, { gap: density.keyGap }]];
   const renderDigitButton = (digit: number) => (
     <TouchableOpacity
       key={digit}
-      style={[styles.keyButton, !isAvailable && styles.keyDisabled]}
+      style={[keyStyle, !isAvailable && styles.keyDisabled]}
+      accessibilityState={{ disabled: !isAvailable }}
       disabled={!isAvailable}
       activeOpacity={0.65}
       onPress={() => onDigitPress(digit)}
@@ -48,9 +58,9 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
   );
 
   return (
-    <View style={[styles.container, style]} testID="numeric-keypad">
+    <View style={[styles.container, density && [styles.compactSpacing, { gap: density.keyGap }], style]} testID="numeric-keypad">
       {/* Channel Entry Readout Display */}
-      <View style={styles.displayCard} testID="keypad-channel-display">
+      <View style={[styles.displayCard, density && styles.inlineDisplay]} testID="keypad-channel-display">
         <Text style={styles.displayLabel}>CHANNEL</Text>
         <Text
           style={[styles.displayText, channelBuffer ? styles.displayTextActive : null]}
@@ -61,31 +71,32 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
       </View>
 
       {/* Grid Row 1: 1 2 3 */}
-      <View style={styles.row}>
+      <View style={rowStyle}>
         {renderDigitButton(1)}
         {renderDigitButton(2)}
         {renderDigitButton(3)}
       </View>
 
       {/* Grid Row 2: 4 5 6 */}
-      <View style={styles.row}>
+      <View style={rowStyle}>
         {renderDigitButton(4)}
         {renderDigitButton(5)}
         {renderDigitButton(6)}
       </View>
 
       {/* Grid Row 3: 7 8 9 */}
-      <View style={styles.row}>
+      <View style={rowStyle}>
         {renderDigitButton(7)}
         {renderDigitButton(8)}
         {renderDigitButton(9)}
       </View>
 
       {/* Grid Row 4: ⌫ 0 OK */}
-      <View style={styles.row}>
+      <View style={rowStyle}>
         {/* Backspace Button */}
         <TouchableOpacity
-          style={[styles.keyButton, styles.specialButton, !isConnected && styles.keyDisabled]}
+          style={[keyStyle, styles.specialButton, !isConnected && styles.keyDisabled]}
+          accessibilityState={{ disabled: !isConnected }}
           disabled={!isConnected}
           activeOpacity={0.65}
           onPress={onBackspacePress}
@@ -101,7 +112,8 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
 
         {/* OK / Confirm Button */}
         <TouchableOpacity
-          style={[styles.keyButton, styles.okButton, !isConnected && styles.keyDisabled]}
+          style={[keyStyle, styles.okButton, !isConnected && styles.keyDisabled]}
+          accessibilityState={{ disabled: !isConnected }}
           disabled={!isConnected}
           activeOpacity={0.65}
           onPress={onOkPress}
@@ -119,6 +131,7 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
+    width: '100%',
     justifyContent: 'center',
     marginVertical: theme.spacing.sm,
   },
@@ -131,49 +144,58 @@ const styles = StyleSheet.create({
     borderColor: '#252D3F',
     paddingVertical: 10,
     paddingHorizontal: 16,
-    marginBottom: 14,
+    marginBottom: 8,
     alignItems: 'center',
+  },
+  compactSpacing: { marginVertical: 0 },
+  inlineDisplay: {
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between',
+    columnGap: 8, paddingVertical: 4, marginBottom: 0,
   },
   displayLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#65738E',
+    color: theme.colors.controlSectionLabel,
     letterSpacing: 1.2,
     marginBottom: 2,
   },
   displayText: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
-    color: '#4B576D',
+    color: theme.colors.textMuted,
     letterSpacing: 4,
   },
   displayTextActive: {
     color: theme.colors.secondary,
   },
   row: {
+    width: '100%',
+    maxWidth: 280,
+    gap: 8,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     marginVertical: 4,
   },
   keyButton: {
-    width: 72,
-    height: 52,
+    flex: 1,
+    minWidth: 48,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     backgroundColor: '#1B2130',
     borderRadius: theme.borderRadius.md,
     justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: 5,
     borderWidth: 1,
     borderColor: '#2B354C',
   },
   keyDisabled: {
-    opacity: 0.45,
+    opacity: theme.remoteDisabledOpacity,
   },
   digitText: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#E0E6F0',
+    color: theme.colors.controlDigit,
   },
   specialButton: {
     backgroundColor: '#161B26',
@@ -181,7 +203,7 @@ const styles = StyleSheet.create({
   },
   backspaceIcon: {
     fontSize: 18,
-    color: '#B6BECE',
+    color: theme.colors.controlLabel,
   },
   okButton: {
     backgroundColor: '#1A2938',

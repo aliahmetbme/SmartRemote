@@ -1,9 +1,10 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
-import { theme } from '../theme';
+import { theme, usePresentationLayout, useRemoteDensity } from '../theme';
 
 export interface TVConnectionHeaderProps {
+  stacked?: boolean;
   tvDisplayName: string;
   connectionStatus: TVConnectionState;
   onNavigateToDiscovery?: () => void;
@@ -14,10 +15,13 @@ export interface TVConnectionHeaderProps {
  * connection status badge (dot / spinner), and Switch TV action.
  */
 export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
+  stacked,
   tvDisplayName,
   connectionStatus,
   onNavigateToDiscovery,
 }) => {
+  const layout = usePresentationLayout();
+  const density = useRemoteDensity();
   const renderStatusBadge = () => {
     let text = 'Disconnected';
     let color: string = theme.colors.textMuted;
@@ -35,7 +39,7 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
         break;
       case TVConnectionState.Pairing:
         text = 'Pairing with TV...';
-        color = theme.colors.pairing;
+        color = theme.colors.pairingText;
         showSpinner = true;
         break;
       case TVConnectionState.Reconnecting:
@@ -52,7 +56,7 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
     }
 
     return (
-      <View style={[styles.statusBadge, { borderColor: color }]} testID="connection-status-badge">
+      <View style={[styles.statusBadge, { borderColor: color }, density && { paddingVertical: density.statusPadding, borderRadius: density.smallControlRadius }]} testID="connection-status-badge">
         {showSpinner ? (
           <ActivityIndicator size="small" color={color} style={styles.badgeSpinner} />
         ) : (
@@ -64,9 +68,9 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
   };
 
   return (
-    <View style={styles.topBar} testID="remote-header">
+    <View style={[styles.topBar, density && { marginBottom: density.sectionGap }, (stacked ?? layout.headerStacked) && styles.stacked]} testID="remote-header">
       <View style={styles.tvInfoCol}>
-        <Text style={styles.tvName} numberOfLines={1} testID="tv-header-title">
+        <Text style={styles.tvName} testID="tv-header-title">
           {tvDisplayName}
         </Text>
         {renderStatusBadge()}
@@ -74,7 +78,7 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
 
       {onNavigateToDiscovery && (
         <TouchableOpacity
-          style={styles.switchTvButton}
+          style={[styles.switchTvButton, density && { paddingVertical: density.displayPadding }]}
           onPress={onNavigateToDiscovery}
           testID="switch-tv-btn"
           accessibilityLabel="Switch TV"
@@ -88,6 +92,7 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
 };
 
 const styles = StyleSheet.create({
+  stacked: { flexDirection: 'column', alignItems: 'stretch', gap: 8 },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -96,10 +101,11 @@ const styles = StyleSheet.create({
   },
   tvInfoCol: {
     flex: 1,
+    minWidth: 0,
     marginRight: theme.spacing.sm,
   },
   tvName: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
     color: theme.colors.textPrimary,
     letterSpacing: 0.3,
@@ -128,11 +134,14 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 11,
     fontWeight: '600',
+    flexShrink: 1,
     letterSpacing: 0.4,
   },
   switchTvButton: {
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingVertical: 10,
     borderRadius: theme.borderRadius.sm,
     backgroundColor: '#1B2130',
     borderWidth: 1,

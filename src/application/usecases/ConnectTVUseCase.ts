@@ -1,6 +1,9 @@
+import { isValidMacAddress } from '../../domain/utils/macValidator';
 import { TVDevice } from '../../domain/entities/TVDevice';
 import { PairingStatus } from '../../domain/enums/PairingStatus';
 import { ITVDeviceRepository } from '../../domain/interfaces/ITVDeviceRepository';
+import { TVConnectionState } from '../../domain/enums/TVConnectionState';
+import { TVConnectionError } from '../../domain/errors/TVConnectionError';
 import { TVConnectionManager } from '../services/TVConnectionManager';
 
 /**
@@ -12,17 +15,38 @@ export class ConnectTVUseCase {
     private readonly manager: TVConnectionManager,
     private readonly repository: ITVDeviceRepository,
     private readonly now: () => number = Date.now,
+    private readonly onSelect?: (id: string) => void,
   ) {}
 
   async execute(device: TVDevice): Promise<TVDevice> {
-    await this.manager.connect(device);
+    this.onSelect?.(device.id);
+    const connection = this.manager.connect(device);
+    const revision = this.manager.getOperationRevision();
+    const isCurrent = () => this.manager.getOperationRevision() === revision &&
+      this.manager.getState() === TVConnectionState.Connected &&
+      this.manager.getDevice()?.id === device.id;
+    const assertCurrent = () => {
+      if (!isCurrent()) throw new TVConnectionError('Connection superseded', 'cancelled');
+    };
+    await connection;
+    assertCurrent();
+    const activeDevice = this.manager.getDevice() ?? device;
+    const existing = await this.repository.getById(device.id);
+    assertCurrent();
+    const macAddress = isValidMacAddress(existing?.macAddress) ? existing?.macAddress : activeDevice.macAddress || device.macAddress;
     const connected: TVDevice = {
-      ...device,
+      ...(existing ?? device),
+      ...activeDevice,
       pairingStatus: PairingStatus.Paired,
+      capabilities: this.manager.getCapabilities() ?? existing?.capabilities ?? device.capabilities,
+      macAddress,
       lastConnectedAt: this.now(),
     };
-    await this.repository.save(connected);
-    await this.repository.setLastSelectedId(connected.id);
-    return connected;
+    await this.repository.save(connected, { preserveStoredMac: true, isCurrent });
+    assertCurrent();
+    await this.repository.setLastSelectedId(connected.id, isCurrent);
+    const saved = await this.repository.getById(connected.id);
+    assertCurrent();
+    return saved ?? connected;
   }
 }

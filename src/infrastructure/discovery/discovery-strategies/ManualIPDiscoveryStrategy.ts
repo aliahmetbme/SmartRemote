@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import { defaultWebSocketFactory, IWebSocketTransport } from '../../adapters/lg-webos/WebSocketTransport';
 import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { UNKNOWN_CAPABILITIES } from '../../../domain/entities/TVCapabilities';
 import { TVDevice } from '../../../domain/entities/TVDevice';
@@ -17,7 +19,7 @@ const defaultEndpointProber: EndpointProber = (ipAddress: string, timeoutMs: num
   return new Promise<boolean>(resolve => {
     let resolved = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let activeSocket: WebSocket | null = null;
+    let activeSocket: IWebSocketTransport | WebSocket | null = null;
 
     const cleanup = () => {
       if (timer) {
@@ -63,7 +65,9 @@ const defaultEndpointProber: EndpointProber = (ipAddress: string, timeoutMs: num
           activeSocket = null;
         }
 
-        const wss = new WebSocket(`wss://${ipAddress}:3001`);
+        const wss = Platform.OS === 'android'
+          ? defaultWebSocketFactory(`wss://${ipAddress}:3001`)
+          : new WebSocket(`wss://${ipAddress}:3001`);
         activeSocket = wss;
         wss.onopen = () => finish(true);
         wss.onerror = () => finish(false);
@@ -72,6 +76,11 @@ const defaultEndpointProber: EndpointProber = (ipAddress: string, timeoutMs: num
         finish(false);
       }
     };
+
+    if (Platform.OS === 'android') {
+      tryWss();
+      return;
+    }
 
     try {
       const ws = new WebSocket(`ws://${ipAddress}:3000`);

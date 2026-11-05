@@ -1,3 +1,4 @@
+import { isValidMacAddress } from '../domain/utils/macValidator';
 import { PairingStatus } from '../domain/enums/PairingStatus';
 import { TVConnectionState } from '../domain/enums/TVConnectionState';
 import { TVPairingError } from '../domain/errors/TVPairingError';
@@ -12,6 +13,7 @@ export function bindConnectionToStore(
   manager: TVConnectionManager,
   dispatch: AppDispatch,
   repository?: ITVDeviceRepository,
+  getState?: () => { tv: { selectedDeviceId: string | null } },
 ) {
   return manager.subscribe(({ state, device, capabilities, error }) => {
     dispatch(connectionActions.statusChanged(state));
@@ -20,9 +22,12 @@ export function bindConnectionToStore(
     );
     dispatch(tvActions.capabilitiesChanged(capabilities));
 
-    // Preserve selected device identity whenever manager has a targeted TV device
+    // Preserve selected device identity without overwriting a newer user selection
     if (device) {
-      dispatch(tvActions.deviceSelected(device.id));
+      const currentSelectedId = getState ? getState().tv.selectedDeviceId : null;
+      if (!currentSelectedId || currentSelectedId === device.id) {
+        dispatch(tvActions.deviceSelected(device.id));
+      }
     }
 
     if (state === TVConnectionState.Pairing) {
@@ -31,17 +36,31 @@ export function bindConnectionToStore(
       dispatch(connectionActions.pairingStatusChanged(PairingStatus.Paired));
       dispatch(connectionActions.lastConnectedDeviceSet(device?.id ?? null));
       if (device) {
-        const updatedDevice = {
-          ...device,
-          pairingStatus: PairingStatus.Paired,
-          capabilities: capabilities ?? device.capabilities,
-          lastConnectedAt: Date.now(),
-        };
         if (repository) {
+          const revision = manager.getOperationRevision();
+          const isCurrent = () => manager.getOperationRevision() === revision &&
+            manager.getState() === TVConnectionState.Connected &&
+            manager.getDevice()?.id === device.id &&
+            (!getState || getState().tv.selectedDeviceId === device.id);
           repository
-            .save(updatedDevice)
-            .then(() => {
-              dispatch(tvActions.deviceSaved(updatedDevice));
+            .getById(device.id)
+            .then(existing => {
+              if (!isCurrent()) return;
+              const macAddress = isValidMacAddress(existing?.macAddress) ? existing?.macAddress : device.macAddress;
+              const mergedDevice = {
+                ...(existing ?? device),
+                ...device,
+                macAddress,
+                pairingStatus: PairingStatus.Paired,
+                capabilities: capabilities ?? existing?.capabilities ?? device.capabilities,
+                lastConnectedAt: Date.now(),
+              };
+              return repository.save(mergedDevice, { preserveStoredMac: true, isCurrent }).then(async () => {
+                if (!isCurrent()) return;
+                await repository.setLastSelectedId(device.id, isCurrent);
+                const saved = await repository.getById(device.id);
+                if (saved && isCurrent()) dispatch(tvActions.deviceSaved(saved));
+              });
             })
             .catch(err => {
               console.warn(
@@ -49,8 +68,13 @@ export function bindConnectionToStore(
                 err,
               );
             });
-          repository.setLastSelectedId(device.id).catch(() => undefined);
         } else {
+          const updatedDevice = {
+            ...device,
+            pairingStatus: PairingStatus.Paired,
+            capabilities: capabilities ?? device.capabilities,
+            lastConnectedAt: Date.now(),
+          };
           dispatch(tvActions.deviceSaved(updatedDevice));
         }
       }

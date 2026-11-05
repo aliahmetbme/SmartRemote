@@ -25,7 +25,7 @@ export class UpdateTVMacUseCase {
       macAddress: canonicalMac,
     };
 
-    await this.repository.save(updatedDevice);
+    await this.repository.save(updatedDevice, { requireExisting: true });
     return updatedDevice;
   }
 }

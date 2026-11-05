@@ -1,12 +1,12 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Text, View, StyleSheet } from 'react-native';
+import { Text, View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RemoteScreen } from '../screens/RemoteScreen';
 import { TVDiscoveryScreen } from '../screens/TVDiscoveryScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
-import { theme } from '../theme';
+import { theme, getTabBarLayout } from '../theme';
 
 export type RootTabParamList = {
   Remote: undefined;
@@ -15,6 +15,10 @@ export type RootTabParamList = {
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
+const navigationTheme = { ...DarkTheme, colors: { ...DarkTheme.colors,
+  background: theme.colors.background, card: theme.colors.surface,
+  text: theme.colors.textPrimary, border: theme.colors.border, primary: theme.colors.secondary,
+} };
 
 const styles = StyleSheet.create({
   tabLabel: {
@@ -76,27 +80,29 @@ const settingsOptions = { tabBarIcon: renderSettingsIcon };
 
 export const AppNavigator: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
 
   const screenOptions = React.useMemo(
     () => ({
       headerShown: false,
+      tabBarHideOnKeyboard: true,
+      tabBarLabelPosition: 'below-icon' as const,
+      tabBarAllowFontScaling: true,
       tabBarStyle: {
         backgroundColor: theme.colors.surface,
         borderTopWidth: 1,
         borderTopColor: theme.colors.border,
-        height: 56 + Math.max(insets.bottom, 10),
-        paddingBottom: Math.max(insets.bottom, 10),
-        paddingTop: 6,
+        ...getTabBarLayout(insets.bottom, fontScale),
       },
       tabBarActiveTintColor: theme.colors.secondary,
       tabBarInactiveTintColor: theme.colors.textMuted,
       tabBarLabelStyle: styles.tabLabel,
     }),
-    [insets.bottom],
+    [insets.bottom, fontScale],
   );
 
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navigationTheme}>
       <Tab.Navigator initialRouteName="Remote" screenOptions={screenOptions}>
         <Tab.Screen name="Remote" component={RemoteScreenWrapper} options={remoteOptions} />
         <Tab.Screen name="Discovery" component={TVDiscoveryScreen} options={discoveryOptions} />

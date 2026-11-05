@@ -108,6 +108,9 @@ describe('Phase 6.1 Regression Hotfix Suite', () => {
       const mockAdapter = new MockTVAdapter();
       const container = createContainer({
         keyValueStorage: storage,
+        // Hold reconnect deadlines while inspecting the offline frame. Real timers can
+        // reconnect during a slow React act() on a busy simulator/build host.
+        scheduler: { setTimeout: jest.fn().mockReturnValue(1), clearTimeout: jest.fn() },
         adapterFactory: {
           create: () => mockAdapter,
           supports: () => true,
@@ -391,7 +394,7 @@ describe('Phase 6.1 Regression Hotfix Suite', () => {
       });
     });
 
-    it('ensures ScrollView contentContainerStyle has generous bottom padding for reachability above bottom tabs', async () => {
+    it('keeps the final inputs scrollable with a single clearance above inset-owning tabs', async () => {
       const container = createContainer();
 
       let renderer: ReactTestRenderer.ReactTestRenderer;
@@ -414,8 +417,11 @@ describe('Phase 6.1 Regression Hotfix Suite', () => {
         ? Object.assign({}, ...contentStyle)
         : contentStyle;
 
-      // Bottom padding must account for safe area (insets.bottom: 34) + extra clearance (64) = 98px
-      expect(combinedStyle.paddingBottom).toBeGreaterThanOrEqual(88);
+      // The tab bar is in normal layout flow and owns the system-navigation inset.
+      // Content needs a single section clearance, not a second tab/safe-area allowance.
+      expect(combinedStyle.paddingBottom).toBe(24);
+      expect(scrollView.props.scrollEnabled).toBe(true);
+      expect(renderer!.root.findByProps({ testID: 'btn-input-AV_1' })).toBeDefined();
 
       await ReactTestRenderer.act(() => {
         renderer?.unmount();

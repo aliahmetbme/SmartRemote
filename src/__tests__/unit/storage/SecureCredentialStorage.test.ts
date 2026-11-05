@@ -30,6 +30,28 @@ describe('SecureCredentialStorage', () => {
     expect(await storage.get('tv-100')).toBeNull();
   });
 
+  it('does not let a delayed pairing write restore credentials after removal', async () => {
+    let completeWrite!: () => void;
+    const waitForWrite = new Promise<void>(resolve => { completeWrite = resolve; });
+    let stored: string | null = null;
+    const reset = jest.fn(async () => { stored = null; return true; });
+    const storage = new SecureCredentialStorage({
+      getGenericPassword: async () => stored ? { password: stored } : false,
+      setGenericPassword: async (_username, password) => {
+        await waitForWrite;
+        stored = password;
+      },
+      resetGenericPassword: reset,
+    });
+    const write = storage.set('tv-1', 'test-client-key');
+    const remove = storage.remove('tv-1');
+    await Promise.resolve();
+    expect(reset).not.toHaveBeenCalled();
+    completeWrite();
+    await Promise.all([write, remove]);
+    expect(await storage.get('tv-1')).toBeNull();
+  });
+
   it('rejects empty credentials with TVPairingError', async () => {
     const storage = new SecureCredentialStorage({
       getGenericPassword: jest.fn(),

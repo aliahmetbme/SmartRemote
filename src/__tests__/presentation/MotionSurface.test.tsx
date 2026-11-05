@@ -1,4 +1,5 @@
 import React from 'react';
+import { AppState } from 'react-native';
 import ReactTestRenderer, { act } from 'react-test-renderer';
 import { Provider } from 'react-redux';
 import { MotionSurface } from '../../presentation/components/MotionSurface';
@@ -8,6 +9,7 @@ import { connectionActions } from '../../store/slices/connectionSlice';
 import { tvActions } from '../../store/slices/tvSlice';
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
 import { createCapabilities } from '../../domain/entities/TVCapabilities';
+import { makeWebOSDevice } from '../../testing/fixtures';
 import { MockTVAdapter } from '../../infrastructure/adapters/mock/MockTVAdapter';
 import {
   DeviceMotionSample,
@@ -49,6 +51,10 @@ class MockMotionSensorService implements IMotionSensorService {
 
 describe('MotionSurface Component', () => {
   let activeRenderer: ReactTestRenderer.ReactTestRenderer | null = null;
+
+  beforeEach(() => {
+    jest.spyOn(AppState, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }));
+  });
 
   afterEach(() => {
     if (activeRenderer) {
@@ -307,6 +313,126 @@ describe('MotionSurface Component', () => {
 
     const banner = renderer!.root.findByProps({ testID: 'motion-sensor-unavailable-banner' });
     expect(banner).toBeTruthy();
+  });
+
+  it('disengages on background and requires a fresh hold after foreground', async () => {
+    let change: (state: 'background' | 'active') => void = () => {};
+    const listener = jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => {
+      change = callback;
+      return { remove: jest.fn() };
+    });
+    try {
+      const { render } = createTestEnv();
+      const active = jest.fn();
+      let renderer: ReactTestRenderer.ReactTestRenderer;
+      await act(async () => { renderer = render({ onActiveChange: active }); });
+      act(() => renderer!.root.findByProps({ testID: 'motion-hold-to-move-btn' }).props.onResponderGrant(createTouchEvent()));
+      expect(active).toHaveBeenLastCalledWith(true);
+      act(() => change('background'));
+      expect(active).toHaveBeenLastCalledWith(false);
+      act(() => change('active'));
+      expect(active).toHaveBeenLastCalledWith(false);
+    } finally { listener.mockRestore(); }
+  });
+
+  it('disengages on connection loss and does not resume aiming on reconnect', async () => {
+    const { container, render } = createTestEnv();
+    const active = jest.fn();
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = render({ onActiveChange: active }); });
+    act(() => renderer!.root.findByProps({ testID: 'motion-hold-to-move-btn' }).props.onResponderGrant(createTouchEvent()));
+    expect(active).toHaveBeenLastCalledWith(true);
+    act(() => { container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Disconnected)); });
+    expect(active).toHaveBeenLastCalledWith(false);
+    act(() => { container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected)); });
+    expect(active).toHaveBeenLastCalledWith(false);
+  });
+
+  it('samples on Aim only and stops on background, disconnect and unmount on Android', async () => {
+    let appState: (state: 'background' | 'active') => void = () => {};
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => {
+      appState = callback;
+      return { remove: jest.fn() };
+    });
+    const { container, mockSensor, render } = createTestEnv();
+    container.motionSamplingOnAim = true;
+    const start = jest.spyOn(mockSensor, 'start');
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = render(); });
+    const hold = () => renderer.root.findByProps({ testID: 'motion-hold-to-move-btn' });
+    expect(start).not.toHaveBeenCalled();
+    await act(async () => { hold().props.onResponderGrant(createTouchEvent()); });
+    expect(mockSensor.isTracking()).toBe(true);
+    await act(async () => { appState('background'); });
+    expect(mockSensor.isTracking()).toBe(false);
+    await act(async () => { appState('active'); });
+    expect(start).toHaveBeenCalledTimes(1);
+    await act(async () => { hold().props.onResponderGrant(createTouchEvent()); });
+    expect(mockSensor.isTracking()).toBe(true);
+    await act(async () => {
+      container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Disconnected));
+    });
+    expect(mockSensor.isTracking()).toBe(false);
+    await act(async () => {
+      container.store.dispatch(connectionActions.statusChanged(TVConnectionState.Connected));
+    });
+    expect(start).toHaveBeenCalledTimes(2);
+    await act(async () => { hold().props.onResponderGrant(createTouchEvent()); });
+    await act(async () => { renderer.unmount(); });
+    expect(mockSensor.isTracking()).toBe(false);
+    activeRenderer = null;
+  });
+
+  it('routes Android samples to the shared pointer and drops an old hold on TV switch', async () => {
+    const { container, mockSensor, render } = createTestEnv();
+    container.motionSamplingOnAim = true;
+    await container.useCases.connectTV.execute(makeWebOSDevice({ id: 'first-motion-tv' }));
+    const send = jest.spyOn(container.useCases.sendRemoteCommand, 'execute').mockResolvedValue();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = render(); });
+    const hold = renderer.root.findByProps({ testID: 'motion-hold-to-move-btn' });
+    await act(async () => { hold.props.onResponderGrant(createTouchEvent()); });
+    const emit = mockSensor.listener!;
+    const sample = {
+      attitude: { pitch: 1, roll: 0, yaw: 0.4 },
+      rotationRate: { x: -0.8, y: -0.8, z: 0 },
+      gravity: { x: 0, y: -1, z: 0 },
+      timestamp: 30,
+    };
+    await act(async () => {
+      emit(sample);
+      emit({ ...sample, timestamp: 30.025 });
+    });
+    const command = send.mock.calls[0][0];
+    expect(command.type).toBe('movePointer');
+    if (command.type === 'movePointer') {
+      expect(command.deltaX).toBeGreaterThan(0);
+      expect(command.deltaY).toBeGreaterThan(0);
+    }
+    await act(async () => {
+      await container.useCases.connectTV.execute(makeWebOSDevice({ id: 'second-motion-tv' }));
+    });
+    expect(mockSensor.isTracking()).toBe(false);
+    if (command.type === 'movePointer') expect(command.isCurrent?.()).toBe(false);
+    emit({ ...sample, timestamp: 30.05 });
+    expect(send).toHaveBeenCalledTimes(1);
+    await act(async () => { renderer.unmount(); });
+    activeRenderer = null;
+    await container.connectionManager.disconnect();
+  });
+
+  it('shows a recoverable registration error on Android and retries the next hold', async () => {
+    const { container, mockSensor, render } = createTestEnv();
+    container.motionSamplingOnAim = true;
+    jest.spyOn(mockSensor, 'start').mockRejectedValueOnce(new Error('registration failed'));
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = render(); });
+    const hold = () => renderer.root.findByProps({ testID: 'motion-hold-to-move-btn' });
+    await act(async () => { hold().props.onResponderGrant(createTouchEvent()); });
+    expect(renderer.root.findAllByProps({ testID: 'motion-sensor-start-failed' })).not.toHaveLength(0);
+    await act(async () => { hold().props.onResponderGrant(createTouchEvent()); });
+    expect(mockSensor.isTracking()).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: 'motion-sensor-start-failed' })).toHaveLength(0);
   });
 
   it('stops sensor and tears down controller on unmount', async () => {

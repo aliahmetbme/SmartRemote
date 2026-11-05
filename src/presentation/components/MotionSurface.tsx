@@ -29,6 +29,7 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
     isPointerSupported,
     isSensorAvailable,
     isAiming,
+    sensorStartFailed,
     sensitivity,
     setSensitivity,
     invertX,
@@ -85,14 +86,16 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
       .catch(() => undefined);
   };
 
-  const canAim = isConnected && isPointerSupported && isSensorAvailable !== false;
+  const canAim = isConnected && isPointerSupported &&
+    (container.motionSamplingOnAim ? isSensorAvailable === true : isSensorAvailable !== false);
+  const deviceLabel = container.motionSamplingOnAim ? 'phone' : 'iPhone';
 
   const panResponder = useMemo(() => {
     return PanResponder.create({
       onStartShouldSetPanResponder: () => canAim,
-      onMoveShouldSetPanResponder: () => canAim,
+      onMoveShouldSetPanResponder: () => canAim && !container.motionSamplingOnAim,
       onStartShouldSetPanResponderCapture: () => canAim,
-      onMoveShouldSetPanResponderCapture: () => canAim,
+      onMoveShouldSetPanResponderCapture: () => canAim && !container.motionSamplingOnAim,
       // Refuse to yield responder status once active so parent ScrollView cannot steal drags
       onPanResponderTerminationRequest: () => false,
 
@@ -109,7 +112,7 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
         setEngaged(false);
       },
     });
-  }, [canAim, setEngaged]);
+  }, [canAim, setEngaged, container.motionSamplingOnAim]);
 
   return (
     <View style={[styles.container, style]} testID="motion-surface">
@@ -127,6 +130,12 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
           <Text style={styles.warningText}>
             Device motion sensors are not available on this device.
           </Text>
+        </View>
+      )}
+
+      {sensorStartFailed && (
+        <View style={styles.warningBanner} accessibilityLiveRegion="polite" testID="motion-sensor-start-failed">
+          <Text style={styles.warningText}>Motion could not start. Hold Aim again to retry.</Text>
         </View>
       )}
 
@@ -152,7 +161,7 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
         </View>
         <Text style={styles.statusDescription}>
           {isAiming
-            ? 'Rotate / tilt your iPhone to guide the TV pointer'
+            ? `Rotate / tilt your ${deviceLabel} to guide the TV pointer`
             : 'Press and hold the Aim button below to move pointer'}
         </Text>
       </View>
@@ -169,7 +178,8 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
         accessible={true}
         accessibilityLabel="Hold to Aim TV Pointer"
         accessibilityRole="button"
-        accessibilityHint="Keep pressed and rotate your iPhone to move the cursor on screen"
+        accessibilityHint={`Keep pressed and rotate your ${deviceLabel} to move the cursor on screen`}
+        accessibilityState={{ disabled: !canAim }}
       >
         <View style={styles.aimReticle}>
           <View style={[styles.reticleRing, isAiming && styles.reticleRingActive]} />

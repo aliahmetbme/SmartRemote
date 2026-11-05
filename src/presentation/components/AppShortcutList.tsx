@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { theme } from '../theme';
+import { theme, usePresentationLayout, useRemoteDensity } from '../theme';
 
 export interface AppShortcut {
   id: string;
@@ -29,14 +29,24 @@ export const AppShortcutList: React.FC<AppShortcutListProps> = ({
   isConnected,
   onLaunchApp,
 }) => {
+  const layout = usePresentationLayout();
+  const density = useRemoteDensity();
+  const chipSurface = density && {
+    paddingVertical: density.displayPadding,
+    paddingHorizontal: density.chipPadding,
+    borderRadius: density.tileRadius,
+  };
+  const getChipWidth = (label: string) => density
+    ? Math.max(layout.chipBasis, Math.ceil(label.length * 7 * layout.fontScale + 2 * density.chipPadding))
+    : layout.chipBasis;
   return (
-    <View style={styles.shortcutsSection} testID="app-shortcuts-section">
+    <View style={[styles.shortcutsSection, density && { marginTop: density.sectionGap }]} testID="app-shortcuts-section">
       <Text style={styles.sectionTitle}>Apps</Text>
       <View style={styles.chipsRow}>
         {shortcuts.map(app => (
           <TouchableOpacity
             key={app.id}
-            style={[styles.appChip, !isConnected && styles.controlDisabled]}
+            style={[styles.appChip, { flexBasis: getChipWidth(app.label) }, chipSurface, !isConnected && styles.controlDisabled]}
             disabled={launchingAppId !== null}
             onPress={() => onLaunchApp(app.id)}
             testID={`btn-app-${app.id}`}
@@ -44,9 +54,9 @@ export const AppShortcutList: React.FC<AppShortcutListProps> = ({
             accessibilityRole="button"
           >
             {launchingAppId === app.id ? (
-              <ActivityIndicator size="small" color="#D4DAE8" />
+              <ActivityIndicator size="small" color={theme.colors.controlActionLabel} />
             ) : (
-              <Text style={styles.chipText}>{app.label}</Text>
+              <Text style={[styles.chipText, density && { letterSpacing: density.chipTracking }]}>{app.label}</Text>
             )}
           </TouchableOpacity>
         ))}
@@ -63,33 +73,37 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#8A9BB5',
+    color: theme.colors.controlSectionLabel,
     marginBottom: theme.spacing.sm,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
   chipsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   appChip: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 48,
+    paddingHorizontal: 8,
     backgroundColor: '#1E2536',
     borderRadius: theme.borderRadius.md,
     paddingVertical: 12,
-    marginHorizontal: 3,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#2F3A52',
   },
   chipText: {
+    textAlign: 'center',
     fontSize: 11,
     fontWeight: '800',
-    color: '#D4DAE8',
+    color: theme.colors.controlActionLabel,
     letterSpacing: 0.6,
   },
   controlDisabled: {
-    opacity: 0.45,
+    opacity: theme.remoteDisabledOpacity,
   },
 });

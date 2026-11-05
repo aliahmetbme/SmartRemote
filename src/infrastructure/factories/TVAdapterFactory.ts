@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { TVDevice } from '../../domain/entities/TVDevice';
 import { TVPlatform } from '../../domain/enums/TVPlatform';
 import { TVProtocol } from '../../domain/enums/TVProtocol';
@@ -57,7 +58,10 @@ export function createLGWebOSRegistration(deps: LGWebOSAdapterDependencies): Ada
   return {
     id: 'lg-webos',
     supports: d => d.protocol === TVProtocol.LGWebOSSSAP && d.platform === TVPlatform.WebOS,
-    create: () => new LGWebOSAdapter(deps),
+    create: () => new LGWebOSAdapter({
+      ...deps,
+      endpoints: deps.endpoints ?? (Platform.OS === 'android' ? [{ scheme: 'wss', port: 3001 }] : undefined),
+    }),
   };
 }
 

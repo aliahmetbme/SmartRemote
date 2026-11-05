@@ -6,6 +6,8 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
+import com.smartremote.lg.LGAndroidWebSocketPackage
+import com.smartremote.motion.AndroidMotionSensorPackage
 import com.smartremote.udp.UdpSocketPackage
 import com.smartremote.wol.WakeOnLanPackage
 
@@ -16,8 +18,10 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
+          add(LGAndroidWebSocketPackage())
           add(UdpSocketPackage())
           add(WakeOnLanPackage())
+          add(AndroidMotionSensorPackage())
         },
     )
   }

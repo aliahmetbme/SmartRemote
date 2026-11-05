@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { theme } from '../theme';
+import { theme, usePresentationLayout, useRemoteDensity, layoutTokens } from '../theme';
 
 export interface RemoteSystemControlsProps {
   isConnected: boolean;
@@ -23,34 +23,40 @@ export const RemoteSystemControls: React.FC<RemoteSystemControlsProps> = ({
   onHomePress,
   onBackPress,
 }) => {
+  const { fontScale } = usePresentationLayout();
+  const density = useRemoteDensity();
+  const padding = density?.systemButtonPadding ?? 8;
+  const buttonSize = Math.max(density ? layoutTokens.minimumTouchTarget : 62, Math.ceil(32 * fontScale + 2 * padding));
+  const tile = { minWidth: buttonSize, minHeight: density ? layoutTokens.minimumTouchTarget : buttonSize, padding };
+  const compactTile = density && { borderRadius: density.tileRadius, borderWidth: density.borderWidth };
   return (
-    <View style={styles.topRowControls}>
+    <View style={[styles.topRowControls, density && { marginBottom: density.sectionGap }]}>
       {/* Power Button */}
       <TouchableOpacity
         style={[
           styles.powerButton,
+          density && [tile, compactTile],
           !isConnected && hasMacAddress && styles.powerButtonWake,
           isWaking && styles.controlDisabled,
         ]}
+        accessibilityState={{ disabled: isWaking, busy: isWaking }}
         disabled={isWaking}
         onPress={onPowerPress}
         testID="btn-power"
         accessibilityLabel={isConnected ? 'Power Off' : 'Power On (Wake-on-LAN)'}
         accessibilityRole="button"
       >
-        <Text
-          style={[
-            styles.powerIcon,
-            !isConnected && hasMacAddress && styles.powerIconWake,
-          ]}
-        >
-          ⏻
-        </Text>
+        <View style={styles.powerSymbol} accessible={false} importantForAccessibility="no-hide-descendants">
+          <View style={[styles.powerRing, !isConnected && hasMacAddress && styles.powerRingWake]} />
+          <View style={[styles.powerGap, !isConnected && hasMacAddress && styles.powerGapWake]} />
+          <View style={[styles.powerStem, !isConnected && hasMacAddress && styles.powerStemWake]} />
+        </View>
       </TouchableOpacity>
 
       {/* Home Button */}
       <TouchableOpacity
-        style={[styles.circleButton, !isConnected && styles.controlDisabled]}
+        style={[styles.systemButton, tile, compactTile, !isConnected && styles.controlDisabled]}
+        accessibilityState={{ disabled: !isConnected }}
         disabled={!isConnected}
         onPress={onHomePress}
         testID="btn-home"
@@ -62,7 +68,8 @@ export const RemoteSystemControls: React.FC<RemoteSystemControlsProps> = ({
 
       {/* Back Button */}
       <TouchableOpacity
-        style={[styles.circleButton, !isConnected && styles.controlDisabled]}
+        style={[styles.systemButton, tile, compactTile, !isConnected && styles.controlDisabled]}
+        accessibilityState={{ disabled: !isConnected }}
         disabled={!isConnected}
         onPress={onBackPress}
         testID="btn-back"
@@ -81,12 +88,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     width: '100%',
-    paddingHorizontal: 8,
-    marginBottom: theme.spacing.lg,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: theme.spacing.md,
   },
   powerButton: {
-    width: 62,
-    height: 62,
+    minWidth: 62,
+    minHeight: 62,
+    padding: 8,
     borderRadius: 31,
     backgroundColor: '#261418',
     borderWidth: 1.5,
@@ -98,17 +107,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#102A1E',
     borderColor: '#1E5E41',
   },
-  powerIcon: {
-    fontSize: 24,
-    color: theme.colors.error,
-    fontWeight: '700',
-  },
-  powerIconWake: {
-    color: theme.colors.connected,
-  },
-  circleButton: {
-    width: 62,
-    height: 62,
+  powerSymbol: { width: 26, height: 26 },
+  powerRing: { position: 'absolute', top: 4, left: 3, width: 20, height: 20, borderRadius: 10, borderWidth: 2.5, borderColor: theme.colors.error },
+  powerGap: { position: 'absolute', top: 1, left: 8, width: 10, height: 8, backgroundColor: '#261418' },
+  powerStem: { position: 'absolute', top: 1, left: 12, width: 2.5, height: 12, borderRadius: 2, backgroundColor: theme.colors.error },
+  powerRingWake: { borderColor: theme.colors.connected },
+  powerGapWake: { backgroundColor: '#102A1E' },
+  powerStemWake: { backgroundColor: theme.colors.connected },
+  systemButton: {
+    minWidth: 62,
+    minHeight: 62,
+    padding: 8,
     borderRadius: 31,
     backgroundColor: '#1C2232',
     borderWidth: 1.5,
@@ -117,12 +126,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   buttonLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    color: '#D4DAE8',
+    color: theme.colors.controlActionLabel,
     letterSpacing: 0.5,
   },
   controlDisabled: {
-    opacity: 0.45,
+    opacity: theme.remoteDisabledOpacity,
   },
 });

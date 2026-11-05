@@ -28,7 +28,7 @@ export type RemoteCommand =
   | { type: 'setVolume'; value: number }
   | { type: 'launchApp'; appId: string }
   | { type: 'openInput'; inputId: string }
-  | { type: 'movePointer'; deltaX: number; deltaY: number }
+  | { type: 'movePointer'; deltaX: number; deltaY: number; isCurrent?: () => boolean }
   | { type: 'sendText'; text: string };
 
 const DIGIT_KEYS: readonly RemoteKey[] = [
@@ -162,7 +162,9 @@ export class SendRemoteCommandUseCase {
         return adapter.openInput(command.inputId);
       case 'movePointer':
         if (!supportsPointer(adapter)) throw unsupported();
-        return adapter.movePointer(command.deltaX, command.deltaY);
+        return command.isCurrent
+          ? adapter.movePointer(command.deltaX, command.deltaY, command.isCurrent)
+          : adapter.movePointer(command.deltaX, command.deltaY);
       case 'sendText':
         if (!supportsTextInput(adapter)) throw unsupported();
         return adapter.sendText(command.text);

@@ -91,12 +91,28 @@ export class TVConnectionManager {
     this.policy = { ...DEFAULT_RECONNECT, ...options.reconnect };
   }
 
+  getOperationRevision(): number {
+    return this.generation;
+  }
+
+  isAppBackgrounded(): boolean {
+    return this.isBackgrounded;
+  }
+
+  isTargeting(deviceId: string): boolean {
+    return (this.targetDevice ?? this.device)?.id === deviceId;
+  }
+
   getState(): TVConnectionState {
     return this.state;
   }
 
   getDevice(): TVDevice | null {
     return this.device;
+  }
+
+  getCapabilities(): TVCapabilities | null {
+    return this.capabilities;
   }
 
   getSnapshot(): ConnectionSnapshot {
@@ -145,9 +161,7 @@ export class TVConnectionManager {
     this.device = device;
     this.beginOperation();
     this.teardown().catch(() => undefined);
-    if (this.state !== TVConnectionState.Connected) {
-      this.resetTo(TVConnectionState.Disconnected);
-    }
+    this.resetTo(TVConnectionState.Disconnected);
   }
 
   finishWake(deviceId: string): void {
@@ -157,13 +171,16 @@ export class TVConnectionManager {
   }
 
   connect(device: TVDevice): Promise<void> {
-    if ((this.targetDevice?.id === device.id || this.device?.id === device.id) && this.inFlight) {
+    if (this.isTargeting(device.id) && this.inFlight) {
       return this.inFlight;
     }
-    if (this.device?.id === device.id && this.state === TVConnectionState.Connected) {
+    if (this.isTargeting(device.id) && this.adapter && this.state === TVConnectionState.Connected) {
       return Promise.resolve();
     }
 
+    if (this.wakeInProgressDeviceId !== device.id) {
+      this.wakeInProgressDeviceId = null;
+    }
     this.targetDevice = device;
     this.shouldRestore = true;
     const generation = this.beginOperation();
@@ -214,13 +231,15 @@ export class TVConnectionManager {
     return reconnectPromise;
   }
 
-  async disconnect(): Promise<void> {
+  async disconnect(forgetDevice = false): Promise<void> {
     this.beginOperation();
     this.targetDevice = null;
+    this.wakeInProgressDeviceId = null;
     this.shouldRestore = false;
-    await this.teardown();
-    this.error = null;
-    this.setState(TVConnectionState.Disconnected);
+    if (forgetDevice) this.device = null;
+    const closing = this.teardown();
+    this.resetTo(TVConnectionState.Disconnected);
+    await closing;
   }
 
   /** Call when the app returns to the foreground. */
@@ -234,15 +253,17 @@ export class TVConnectionManager {
 
     try {
       if (this.state === TVConnectionState.Connected && this.adapter) {
+        const adapter = this.adapter;
+        const generation = this.generation;
         let isHealthy = false;
         try {
-          isHealthy = (await this.adapter.checkLiveness?.()) ?? true;
+          isHealthy = (await adapter.checkLiveness?.()) ?? true;
         } catch {
           isHealthy = false;
         }
 
         // If the app was moved back to background while awaiting liveness, abort
-        if (this.isBackgrounded) {
+        if (this.isBackgrounded || generation !== this.generation || adapter !== this.adapter) {
           return;
         }
 
@@ -250,7 +271,7 @@ export class TVConnectionManager {
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[SmartRemote][AppState] Socket verified healthy upon returning to foreground');
           }
-          this.adapter.resumeHeartbeat?.();
+          adapter.resumeHeartbeat?.();
           return;
         }
 
@@ -294,13 +315,14 @@ export class TVConnectionManager {
     this.clearRetryTimer();
     this.adapter?.pauseHeartbeat?.();
 
-    if (this.state === TVConnectionState.Reconnecting || this.state === TVConnectionState.Connecting) {
-      const gen = this.beginOperation();
-      this.teardown().then(() => {
-        if (gen === this.generation) {
-          this.setState(TVConnectionState.Disconnected);
-        }
-      });
+    if (this.state === TVConnectionState.Reconnecting ||
+        this.state === TVConnectionState.Connecting ||
+        (this.inFlight && this.state !== TVConnectionState.Pairing)) {
+      this.device = this.targetDevice ?? this.device;
+      this.beginOperation();
+      this.targetDevice = null;
+      this.teardown().catch(() => undefined);
+      this.resetTo(TVConnectionState.Disconnected);
     }
   }
 
@@ -326,7 +348,7 @@ export class TVConnectionManager {
       try {
         await adapter.disconnect();
       } catch {
-        // best effort cleanup
+        // Best effort cleanup.
       }
     }
   }
@@ -353,9 +375,9 @@ export class TVConnectionManager {
     }
 
     this.adapter = adapter;
-    this.unsubscribeAdapter = adapter.onConnectionStateChange((s, err) =>
-      this.onAdapterState(generation, s, err),
-    );
+    this.unsubscribeAdapter = adapter.onConnectionStateChange((s, err) => {
+      if (adapter === this.adapter) this.onAdapterState(generation, s, err);
+    });
     this.setState(initial);
 
     const promise = this.runAttempt(adapter, device, generation, autoRetry);
@@ -413,8 +435,11 @@ export class TVConnectionManager {
           ? e
           : new TVConnectionError('Connection cancelled', 'cancelled', e);
       }
-      this.inFlight = null;
       await this.teardown();
+      if (generation !== this.generation) {
+        throw new TVConnectionError('Connection superseded during cleanup', 'cancelled', e);
+      }
+      this.inFlight = null;
       const retryable = autoRetry && !(e instanceof TVPairingError);
       if (retryable) {
         this.scheduleRetry(generation);
@@ -455,12 +480,7 @@ export class TVConnectionManager {
 
   private handleConnectionLost(generation: number, error?: Error): void {
     this.error = error ?? null;
-    this.unsubscribeAdapter?.();
-    this.unsubscribeAdapter = null;
-    const adapter = this.adapter;
-    this.adapter = null;
-    this.capabilities = null;
-    adapter?.disconnect().catch(() => undefined);
+    this.teardown().catch(() => undefined);
 
     if (this.isBackgrounded) {
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
@@ -497,7 +517,7 @@ export class TVConnectionManager {
     }
     this.retryTimer = this.scheduler.setTimeout(() => {
       this.retryTimer = null;
-      if (generation !== this.generation || !this.device) {
+      if (generation !== this.generation || this.isBackgrounded || !this.device || this.inFlight) {
         return;
       }
       this.startAttempt(this.device, generation, TVConnectionState.Reconnecting, true).catch(

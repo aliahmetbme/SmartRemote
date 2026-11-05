@@ -4,8 +4,10 @@ import { PairingStatus } from '../../domain/enums/PairingStatus';
 import { TVBrand } from '../../domain/enums/TVBrand';
 import { TVPlatform } from '../../domain/enums/TVPlatform';
 import { TVProtocol } from '../../domain/enums/TVProtocol';
-import { ITVDeviceRepository } from '../../domain/interfaces/ITVDeviceRepository';
+import { ITVDeviceRepository, SaveTVDeviceOptions } from '../../domain/interfaces/ITVDeviceRepository';
+import { TVConnectionError } from '../../domain/errors/TVConnectionError';
 import { RepositoryCorruptionError } from '../../domain/errors/RepositoryCorruptionError';
+import { isValidMacAddress } from '../../domain/utils/macValidator';
 import { IKeyValueStorage } from '../storage/IKeyValueStorage';
 
 export const DEVICES_KEY = 'smartremote.savedDevices.v1';
@@ -123,16 +125,21 @@ export class LocalTVDeviceRepository implements ITVDeviceRepository {
     return devices.find(d => d.id === id) ?? null;
   }
 
-  async save(device: TVDevice): Promise<void> {
+  async save(device: TVDevice, options?: SaveTVDeviceOptions): Promise<void> {
     return this.withLock(async () => {
       // Re-read inside lock to prevent race conditions and detect corrupt storage
       const raw = await this.storage.getItem(DEVICES_KEY);
       const devices = this.parseRawDevices(raw);
 
+      if (options?.isCurrent && !options.isCurrent()) return;
       const index = devices.findIndex(d => d.id === device.id);
       if (index >= 0) {
-        devices[index] = device;
+        const stored = devices[index];
+        const preserveMac = isValidMacAddress(stored.macAddress) &&
+          (options?.preserveStoredMac || !isValidMacAddress(device.macAddress));
+        devices[index] = preserveMac ? { ...device, macAddress: stored.macAddress } : device;
       } else {
+        if (options?.requireExisting) throw new TVConnectionError('TV device is no longer saved', 'not_found');
         devices.push(device);
       }
       await this.storage.setItem(DEVICES_KEY, JSON.stringify(devices));
@@ -151,7 +158,7 @@ export class LocalTVDeviceRepository implements ITVDeviceRepository {
       const filtered = devices.filter(d => d.id !== id);
       await this.storage.setItem(DEVICES_KEY, JSON.stringify(filtered));
       if ((await this.getLastSelectedId()) === id) {
-        await this.setLastSelectedId(null);
+        await this.writeLastSelectedId(null);
       }
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.log(
@@ -165,7 +172,13 @@ export class LocalTVDeviceRepository implements ITVDeviceRepository {
     return this.storage.getItem(LAST_SELECTED_KEY);
   }
 
-  async setLastSelectedId(id: string | null): Promise<void> {
+  setLastSelectedId(id: string | null, isCurrent?: () => boolean): Promise<void> {
+    return this.withLock(async () => {
+      if (!isCurrent || isCurrent()) await this.writeLastSelectedId(id);
+    });
+  }
+
+  private async writeLastSelectedId(id: string | null): Promise<void> {
     if (id === null) {
       await this.storage.removeItem(LAST_SELECTED_KEY);
     } else {

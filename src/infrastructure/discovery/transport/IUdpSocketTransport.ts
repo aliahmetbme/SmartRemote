@@ -28,6 +28,7 @@ export interface IUdpSocketTransport {
    * Returns an unsubscribe function.
    */
   onMessage(listener: UdpMessageListener): () => void;
+  onError?(listener: (error: Error) => void): () => void;
 
   /**
    * Closes the socket and releases native resources.

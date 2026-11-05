@@ -167,4 +167,44 @@ describe('LGWebOSSSDPDiscoveryStrategy', () => {
     expect(strategy.isAvailable()).toBe(false);
     await expect(strategy.discover()).rejects.toBeInstanceOf(TVDiscoveryError);
   });
+  it('ignores XML responses that finish after cancellation and closes the transport', async () => {
+    const transport = new FakeUdpSocketTransport();
+    let resolveXml!: (xml: string) => void;
+    const strategy = new LGWebOSSSDPDiscoveryStrategy(transport, {
+      xmlFetcher: () => new Promise(resolve => { resolveXml = resolve; }),
+    });
+    const abort = new AbortController();
+    const found = jest.fn();
+    const pending = strategy.discover({ signal: abort.signal, onDeviceFound: found });
+    await Promise.resolve();
+    transport.simulateIncoming(validResponse, { address: '192.168.1.100', port: 1900 });
+    abort.abort();
+    expect(await pending).toEqual([]);
+    resolveXml('<device><friendlyName>Late TV</friendlyName></device>');
+    await Promise.resolve(); await Promise.resolve();
+    expect(found).not.toHaveBeenCalled();
+    expect(transport.closed).toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('serializes replacement scans so old cleanup cannot close the new UDP session', async () => {
+    const transport = new FakeUdpSocketTransport();
+    const close = jest.spyOn(transport, 'close');
+    const bind = jest.spyOn(transport, 'bind');
+    const strategy = new LGWebOSSSDPDiscoveryStrategy(transport, { defaultTimeoutMs: 100 });
+    const abort = new AbortController();
+    const old = strategy.discover({ signal: abort.signal });
+    await Promise.resolve();
+    abort.abort();
+    const current = strategy.discover();
+    await old;
+    await Promise.resolve(); await Promise.resolve();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(bind).toHaveBeenCalledTimes(2);
+    jest.advanceTimersByTime(100);
+    await current;
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
 });

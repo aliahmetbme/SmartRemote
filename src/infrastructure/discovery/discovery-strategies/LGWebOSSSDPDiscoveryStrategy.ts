@@ -60,6 +60,7 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
   private readonly scheduler: Scheduler;
   private readonly xmlFetcher: XmlFetcher;
   private readonly defaultTimeoutMs: number;
+  private scanCompletion: Promise<void> | null = null;
 
   constructor(
     private readonly transport: IUdpSocketTransport,
@@ -75,6 +76,21 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
   }
 
   async discover(options: DiscoveryOptions = {}): Promise<TVDevice[]> {
+    const previous = this.scanCompletion;
+    let release!: () => void;
+    const completion = new Promise<void>(resolve => { release = resolve; });
+    this.scanCompletion = completion;
+    if (previous) await previous;
+    try {
+      if (options.signal?.aborted) return [];
+      return await this.runDiscovery(options);
+    } finally {
+      release();
+      if (this.scanCompletion === completion) this.scanCompletion = null;
+    }
+  }
+
+  private async runDiscovery(options: DiscoveryOptions): Promise<TVDevice[]> {
     if (!this.isAvailable()) {
       throw new TVDiscoveryError(
         'SSDP UDP multicast is not available in the current environment',
@@ -86,6 +102,9 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
     const discovered = new Map<string, TVDevice>();
     const pendingIds = new Set<string>();
 
+    let active = true;
+    let removeAbortListener: (() => void) | undefined;
+    let cleanupError: (() => void) | undefined;
     let cleanupListener: (() => void) | null = null;
     let timer: unknown = null;
 
@@ -103,12 +122,14 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
         };
 
         options.signal?.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => options.signal?.removeEventListener('abort', onAbort);
 
         timer = this.scheduler.setTimeout(() => {
           options.signal?.removeEventListener('abort', onAbort);
           resolve(Array.from(discovered.values()));
         }, timeoutMs);
 
+        cleanupError = this.transport.onError?.(error => reject(error));
         cleanupListener = this.transport.onMessage((msg, rinfo) => {
           this.handleIncomingDatagram(
             msg,
@@ -116,6 +137,7 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
             discovered,
             pendingIds,
             options.onDeviceFound,
+            () => active,
           ).catch(() => {
             // Ignore individual packet handling errors
           });
@@ -131,6 +153,9 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
 
       return await discoveryPromise;
     } finally {
+      active = false;
+      removeAbortListener?.();
+      cleanupError?.();
       if (typeof cleanupListener === 'function') {
         (cleanupListener as () => void)();
       }
@@ -145,6 +170,7 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
     discovered: Map<string, TVDevice>,
     pendingIds: Set<string>,
     onDeviceFound?: (device: TVDevice) => void,
+    isActive: () => boolean = () => true,
   ): Promise<void> {
     const packet = parseSSDPResponse(msg);
     if (!packet) {
@@ -189,6 +215,8 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
         // Fall back to default name if UPnP description XML fails to load
       }
     }
+
+    if (!isActive()) return;
 
     const device: TVDevice = {
       id: deviceId,

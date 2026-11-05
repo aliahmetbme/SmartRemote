@@ -50,19 +50,21 @@ export class DiscoveryManager {
   async startDiscovery(options: StartDiscoveryOptions = {}): Promise<TVDevice[]> {
     this.cancelDiscovery();
 
-    this.abortController = new AbortController();
+    const controller = new AbortController();
+    this.abortController = controller;
     this.isScanning = true;
     this.emitStarted();
 
     try {
       const devices = await this.discoverTVs.execute({
         timeoutMs: options.timeoutMs,
-        signal: this.abortController.signal,
+        signal: controller.signal,
         onDeviceFound: device => {
-          this.emitDeviceDiscovered(device);
+          if (this.abortController === controller) this.emitDeviceDiscovered(device);
         },
       });
 
+      if (this.abortController !== controller) return devices;
       for (const device of devices) {
         this.emitDeviceDiscovered(device);
       }
@@ -71,6 +73,7 @@ export class DiscoveryManager {
       this.emitCompleted();
       return devices;
     } catch (error) {
+      if (this.abortController !== controller) return [];
       this.isScanning = false;
       const code: TVDiscoveryErrorCode | 'unknown' =
         error instanceof TVDiscoveryError ? error.code : 'unknown';
@@ -79,7 +82,7 @@ export class DiscoveryManager {
       this.emitFailed({ code, message });
       throw error;
     } finally {
-      this.abortController = null;
+      if (this.abortController === controller) this.abortController = null;
     }
   }
 

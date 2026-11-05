@@ -16,7 +16,7 @@ export const selectSelectedDeviceId = (s: RootState) => s.tv.selectedDeviceId;
 export const selectSelectedDevice = createSelector(
   [(s: RootState) => s.tv.savedDevices, (s: RootState) => s.tv.discoveredDevices, (s: RootState) => s.tv.selectedDeviceId],
   (saved, discovered, id) =>
-    id ? [...discovered, ...saved].find(d => d.id === id) ?? null : null,
+    id ? saved.find(d => d.id === id) ?? discovered.find(d => d.id === id) ?? null : null,
 );
 
 /** A control is usable only when connected AND the TV reports the capability. */

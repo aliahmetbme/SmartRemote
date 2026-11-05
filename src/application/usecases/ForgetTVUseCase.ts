@@ -20,6 +20,7 @@ export class ForgetTVUseCase {
     private readonly repository: ITVDeviceRepository,
     private readonly manager: TVConnectionManager,
     private readonly credentialStorage?: ICredentialStorage,
+    private readonly invalidateHydration?: () => void,
   ) {}
 
   async execute(deviceId: string): Promise<ForgetTVResult> {
@@ -27,14 +28,14 @@ export class ForgetTVUseCase {
       throw new Error('Device ID must not be empty');
     }
 
+    this.invalidateHydration?.();
     let disconnected = false;
     let credentialsRemoved = false;
 
     // 1. If currently connected or reconnecting to this TV, tear down connection cleanly
-    const currentDevice = this.manager.getDevice();
-    if (currentDevice && currentDevice.id === deviceId) {
+    if (this.manager.isTargeting(deviceId)) {
       try {
-        await this.manager.disconnect();
+        await this.manager.disconnect(true);
         disconnected = true;
       } catch (err) {
         console.warn(`[SmartRemote][ForgetTV] Failed to cleanly disconnect TV ${deviceId}:`, err);

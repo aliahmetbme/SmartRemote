@@ -104,14 +104,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#3D4A66',
   },
   gesturesIndicator: {
+    left: 12,
+    right: 12,
     position: 'absolute',
     bottom: 16,
     alignItems: 'center',
   },
   gesturesText: {
+    textAlign: 'center',
     fontSize: 11,
     fontWeight: '600',
-    color: '#65738E',
+    color: theme.colors.textSecondary,
     letterSpacing: 0.8,
   },
   disabledOverlay: {
@@ -121,6 +124,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   disabledText: {
+    textAlign: 'center',
+    paddingHorizontal: 16,
     color: theme.colors.textMuted,
     fontSize: 14,
     fontWeight: '600',

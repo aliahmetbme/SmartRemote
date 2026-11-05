@@ -89,11 +89,21 @@ export class WakeTVUseCase {
     const delay = (ms: number): Promise<void> =>
       new Promise(resolve => this.scheduler.setTimeout(resolve, ms));
 
+    const assertCurrent = () => {
+      if (abortSignal?.aborted || !this.connectionManager.isWakeInProgress(device.id)) {
+        throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
+      }
+    };
+    if (abortSignal?.aborted || this.connectionManager.isAppBackgrounded()) {
+      throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
+    }
     this.connectionManager.prepareForWake(device);
 
     try {
       // 1. Send Wake-on-LAN Magic Packet
+      assertCurrent();
       onProgress?.('sending');
+      assertCurrent();
       let wakeResult;
       try {
         wakeResult = await this.wakeService.wake(device.macAddress!, {
@@ -103,11 +113,17 @@ export class WakeTVUseCase {
           delayMs: options.delayMs ?? 50,
         });
       } catch (err) {
+        assertCurrent();
         onProgress?.('failed');
         throw err;
       }
 
       // 2. Initial hardware boot wait
+      assertCurrent();
+      if (!wakeResult.success || wakeResult.packetsSent === 0) {
+        onProgress?.('failed');
+        throw new TVConnectionError('Wake-on-LAN sent no packets', 'wol_failed');
+      }
       onProgress?.('waiting');
       if (initialBootDelayMs > 0) {
         await delay(initialBootDelayMs);
@@ -118,9 +134,7 @@ export class WakeTVUseCase {
       let lastError: Error | undefined;
 
       while (Date.now() - startTime < wakeTimeoutMs) {
-        if (abortSignal?.aborted) {
-          throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
-        }
+        assertCurrent();
 
         // If already connected by foreground or user, resolve successfully
         if (
@@ -136,10 +150,17 @@ export class WakeTVUseCase {
           };
         }
 
+        if (this.connectionManager.isAppBackgrounded()) {
+          await delay(Math.max(1, probeIntervalMs));
+          continue;
+        }
         onProgress?.('connecting');
+        assertCurrent();
         try {
           await this.connectionManager.connect(device);
-          if (this.connectionManager.getState() === TVConnectionState.Connected) {
+          assertCurrent();
+          if (this.connectionManager.getState() === TVConnectionState.Connected &&
+              this.connectionManager.getDevice()?.id === device.id) {
             onProgress?.('connected');
             return {
               success: true,
@@ -153,9 +174,7 @@ export class WakeTVUseCase {
           // TV is still booting / network interface not yet answering SSAP; continue loop
         }
 
-        if (abortSignal?.aborted) {
-          throw new TVConnectionError('Wake-on-LAN cancelled', 'cancelled');
-        }
+        assertCurrent();
 
         const elapsed = Date.now() - startTime;
         if (elapsed + probeIntervalMs < wakeTimeoutMs) {
@@ -165,6 +184,7 @@ export class WakeTVUseCase {
         }
       }
 
+      assertCurrent();
       onProgress?.('failed');
       return {
         success: false,

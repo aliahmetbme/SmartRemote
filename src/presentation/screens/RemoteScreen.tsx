@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   ScrollView,
   StyleSheet,
   Alert,
+  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppSelector } from '../../store/hooks';
@@ -28,7 +29,7 @@ import { TVConnectionHeader } from '../components/TVConnectionHeader';
 import { RemoteSystemControls } from '../components/RemoteSystemControls';
 import { AppShortcutList } from '../components/AppShortcutList';
 import { InputShortcutList } from '../components/InputShortcutList';
-import { theme } from '../theme';
+import { theme, usePresentationLayout, getRemoteGeometry, getRemoteCardLayout, useRemoteDensity, layoutTokens } from '../theme';
 
 interface RemoteScreenProps {
   onNavigateToDiscovery?: () => void;
@@ -41,6 +42,14 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
 }) => {
   const container = useContainer();
   const insets = useSafeAreaInsets();
+  const layout = usePresentationLayout(insets.left + insets.right);
+  const density = useRemoteDensity();
+  const { innerWidth, ...cardInsets } = getRemoteCardLayout(layout, density);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [clusterWidth, setClusterWidth] = useState<number | null>(null);
+  const geometry = getRemoteGeometry(
+    Math.min(innerWidth, clusterWidth ?? innerWidth), viewportHeight, layout.fontScale, Boolean(density),
+  );
 
   const connectionStatus = useAppSelector(selectConnectionStatus);
   const activeDeviceId = useAppSelector(selectSelectedDeviceId);
@@ -49,6 +58,27 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
   const capabilities = useAppSelector(selectCapabilities);
 
   const [activeTab, setActiveTab] = useState<RemoteMode>('buttons');
+  const [motionAvailable, setMotionAvailable] = useState(!container.motionSamplingOnAim);
+  useEffect(() => {
+    if (!container.motionSamplingOnAim) {
+      setMotionAvailable(true);
+      return;
+    }
+    let revision = 0;
+    const refresh = () => {
+      const request = ++revision;
+      container.motionSensorService.isAvailable().catch(() => false).then(available => {
+        if (request !== revision) return;
+        setMotionAvailable(available);
+        if (!available) setActiveTab(mode => mode === 'motion' ? 'buttons' : mode);
+      });
+    };
+    refresh();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') refresh();
+    });
+    return () => { ++revision; subscription.remove(); };
+  }, [container.motionSamplingOnAim, container.motionSensorService]);
   const [isTouchpadActive, setIsTouchpadActive] = useState<boolean>(false);
   const [isMotionActive, setIsMotionActive] = useState<boolean>(false);
   const [launchingAppId, setLaunchingAppId] = useState<string | null>(null);
@@ -94,10 +124,13 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
       Alert.alert('TV Disconnected', 'Please connect to your TV to launch applications.');
       return;
     }
+    const revision = container.connectionManager.getOperationRevision();
+    const isCurrent = () => container.connectionManager.getOperationRevision() === revision;
     setLaunchingAppId(targetAlias);
     try {
       // Resolve app ID through GetInstalledAppsUseCase
       const resolvedId = await container.useCases.getInstalledApps.resolveAppId(targetAlias);
+      if (!isCurrent()) return;
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.log(`[SmartRemote][LaunchApp] Launching alias '${targetAlias}' as '${resolvedId}'`);
       }
@@ -106,6 +139,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
         appId: resolvedId,
       });
     } catch {
+      if (!isCurrent()) return;
       // Fallback: direct SSAP launch if alias resolution encountered an issue
       try {
         await container.useCases.sendRemoteCommand.execute({
@@ -204,14 +238,86 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
     setActiveTab(tab);
   };
 
+  const volumeRocker = (
+    <VolumeRocker
+      width={geometry.rockerWidth}
+      height={geometry.rockerHeight}
+      onVolumeUp={() =>
+        handleCommand(
+          () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
+          'volumeUp',
+        )
+      }
+      onVolumeDown={() =>
+        handleCommand(
+          () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
+          'volumeDown',
+        )
+      }
+      onMute={() =>
+        handleCommand(
+          () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
+          'mute',
+        )
+      }
+      disabled={!isConnected}
+      volDisabled={!isCapable('volumeControl')}
+      muteDisabled={!isCapable('muteControl')}
+              />
+  );
+  const channelRocker = (
+    <ChannelRocker
+      width={geometry.rockerWidth}
+      height={geometry.rockerHeight}
+      onChannelUp={() =>
+        handleCommand(
+          () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
+          'channelUp',
+        )
+      }
+      onChannelDown={() =>
+        handleCommand(
+          () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
+          'channelDown',
+        )
+      }
+      disabled={!isConnected || !isCapable('channelControl')}
+              />
+  );
+  const directionPad = (
+    <DirectionPad
+      size={geometry.dpadSize}
+      centerDiameter={density?.centerSize}
+      onNavigate={direction =>
+        handleCommand(
+          () =>
+            container.useCases.sendRemoteCommand.execute({
+              type: 'navigate',
+              direction,
+            }),
+          `navigate-${direction}`,
+        )
+      }
+      onSelect={() =>
+        handleCommand(
+          () => container.useCases.sendRemoteCommand.execute({ type: 'select' }),
+          'select',
+        )
+      }
+      disabled={!isConnected}
+              />
+  );
   return (
+    <View style={[styles.container, { paddingTop: insets.top }]} testID="remote-safe-area">
     <ScrollView
       style={styles.container}
+      onLayout={event => setViewportHeight(event.nativeEvent.layout.height)}
       contentContainerStyle={[
         styles.contentContainer,
         {
-          paddingTop: Math.max(insets.top, 16),
-          paddingBottom: Math.max(insets.bottom, 24) + 64,
+          paddingTop: Math.max(0, 16 - insets.top),
+          paddingLeft: layout.pagePadding + insets.left,
+          paddingRight: layout.pagePadding + insets.right,
         },
       ]}
       scrollEnabled={!isTouchpadActive && !isMotionActive}
@@ -221,6 +327,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
       <TVConnectionHeader
         tvDisplayName={tvDisplayName}
         connectionStatus={connectionStatus}
+        stacked={layout.headerStacked}
         onNavigateToDiscovery={onNavigateToDiscovery}
       />
 
@@ -228,10 +335,12 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
       <RemoteModeSelector
         activeMode={activeTab}
         onModeChange={handleTabChange}
+        motionAvailable={motionAvailable}
+        stacked={layout.modeStacked}
       />
 
       {/* Remote Body Card */}
-      <View style={styles.remoteBody}>
+      <View style={[styles.remoteBody, cardInsets, density && { borderRadius: density.cardRadius }]}>
         {/* System Controls: Power, Home, Back */}
         <RemoteSystemControls
           isConnected={isConnected}
@@ -256,70 +365,23 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
         {activeTab === 'buttons' && (
           <View testID="buttons-mode-content">
             {/* 3. Volume, D-Pad, and Channel Cluster */}
-            <View style={styles.middleControlRow}>
-              <VolumeRocker
-                onVolumeUp={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
-                    'volumeUp',
-                  )
-                }
-                onVolumeDown={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
-                    'volumeDown',
-                  )
-                }
-                onMute={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
-                    'mute',
-                  )
-                }
-                disabled={!isConnected}
-                volDisabled={!isCapable('volumeControl')}
-                muteDisabled={!isCapable('muteControl')}
-              />
-
-              <DirectionPad
-                onNavigate={direction =>
-                  handleCommand(
-                    () =>
-                      container.useCases.sendRemoteCommand.execute({
-                        type: 'navigate',
-                        direction,
-                      }),
-                    `navigate-${direction}`,
-                  )
-                }
-                onSelect={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'select' }),
-                    'select',
-                  )
-                }
-                disabled={!isConnected}
-              />
-
-              <ChannelRocker
-                onChannelUp={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
-                    'channelUp',
-                  )
-                }
-                onChannelDown={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
-                    'channelDown',
-                  )
-                }
-                disabled={!isConnected || !isCapable('channelControl')}
-              />
+            <View
+              testID="remote-control-cluster"
+              onLayout={event => setClusterWidth(Math.floor(event.nativeEvent.layout.width))}
+              style={[styles.controlCluster, density && { marginBottom: density.sectionGap }]}
+            >
+              {geometry.stacked ? (
+                <View style={styles.stackedControls}>
+                  {directionPad}
+                  <View style={styles.stackedRockers}>{volumeRocker}{channelRocker}</View>
+                </View>
+              ) : (
+                <View style={styles.middleControlRow}>{volumeRocker}{directionPad}{channelRocker}</View>
+              )}
             </View>
 
             {/* 4. NumericKeypad inside Buttons mode */}
-            <View style={styles.keypadContainer} testID="keypad-buttons-section">
+            <View style={[styles.keypadContainer, density && styles.compactKeypadContainer]} testID="keypad-buttons-section">
               <NumericKeypad style={styles.numbersKeypadSurface} />
             </View>
 
@@ -355,44 +417,8 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
               onActiveChange={setIsTouchpadActive}
             />
             <View style={styles.touchpadRockersRow}>
-              <VolumeRocker
-                onVolumeUp={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
-                    'volumeUp',
-                  )
-                }
-                onVolumeDown={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
-                    'volumeDown',
-                  )
-                }
-                onMute={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
-                    'mute',
-                  )
-                }
-                disabled={!isConnected}
-                volDisabled={!isCapable('volumeControl')}
-                muteDisabled={!isCapable('muteControl')}
-              />
-              <ChannelRocker
-                onChannelUp={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
-                    'channelUp',
-                  )
-                }
-                onChannelDown={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
-                    'channelDown',
-                  )
-                }
-                disabled={!isConnected || !isCapable('channelControl')}
-              />
+              {volumeRocker}
+              {channelRocker}
             </View>
           </View>
         )}
@@ -405,49 +431,14 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
               onActiveChange={setIsMotionActive}
             />
             <View style={styles.motionRockersRow}>
-              <VolumeRocker
-                onVolumeUp={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeUp' }),
-                    'volumeUp',
-                  )
-                }
-                onVolumeDown={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'volumeDown' }),
-                    'volumeDown',
-                  )
-                }
-                onMute={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'mute' }),
-                    'mute',
-                  )
-                }
-                disabled={!isConnected}
-                volDisabled={!isCapable('volumeControl')}
-                muteDisabled={!isCapable('muteControl')}
-              />
-              <ChannelRocker
-                onChannelUp={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelUp' }),
-                    'channelUp',
-                  )
-                }
-                onChannelDown={() =>
-                  handleCommand(
-                    () => container.useCases.sendRemoteCommand.execute({ type: 'channelDown' }),
-                    'channelDown',
-                  )
-                }
-                disabled={!isConnected || !isCapable('channelControl')}
-              />
+              {volumeRocker}
+              {channelRocker}
             </View>
           </View>
         )}
       </View>
     </ScrollView>
+    </View>
   );
 };
 
@@ -457,27 +448,36 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   contentContainer: {
+    width: '100%',
+    maxWidth: layoutTokens.pageMaxWidth,
+    alignSelf: 'center',
     paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.xl,
+    paddingBottom: theme.spacing.lg,
     flexGrow: 1,
   },
   remoteBody: {
-    backgroundColor: '#151924',
+    width: '100%',
+    maxWidth: layoutTokens.remoteMaxWidth,
+    alignSelf: 'center',
+    backgroundColor: theme.colors.remoteCard,
     borderRadius: 28,
-    borderWidth: 1.5,
-    borderColor: '#242C3E',
+    borderColor: theme.colors.remoteCardEdge,
     padding: theme.spacing.md,
     marginBottom: theme.spacing.sm,
   },
+  controlCluster: { marginBottom: 16 },
+  stackedControls: { alignItems: 'center', gap: 12 },
+  stackedRockers: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 16, width: '100%' },
   middleControlRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: theme.spacing.lg,
+    gap: 8,
   },
+  compactKeypadContainer: { marginTop: 0 },
   keypadContainer: {
     marginTop: theme.spacing.xs,
-    marginBottom: theme.spacing.md,
+    marginBottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -493,7 +493,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.xl,
+    flexWrap: 'wrap',
+    gap: 16,
   },
   numbersKeypadSurface: {
     marginBottom: 0,
@@ -508,6 +509,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.xl,
+    flexWrap: 'wrap',
+    gap: 16,
   },
 });

@@ -16,48 +16,27 @@ function App({ container }: AppProps) {
   const activeContainer = useMemo(() => container ?? createProductionContainer(), [container]);
 
   useEffect(() => {
-    // Stage 1: Immediate repository hydration (independent of network)
-    Promise.all([
-      activeContainer.deviceRepository.getAll(),
-      activeContainer.deviceRepository.getLastSelectedId(),
-    ])
-      .then(([saved, lastSelected]) => {
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(
-            `[SmartRemote][Startup] Hydrated ${saved.length} device(s) from storage, lastSelectedId='${lastSelected}'`,
-          );
-        }
-        activeContainer.store.dispatch(tvActions.savedDevicesLoaded(saved));
-        if (lastSelected) {
-          activeContainer.store.dispatch(tvActions.deviceSelected(lastSelected));
-        } else if (saved.length > 0) {
-          activeContainer.store.dispatch(tvActions.deviceSelected(saved[0].id));
-        }
-      })
-      .catch(err => {
-        console.warn('[SmartRemote][Startup] Failed to load saved devices from repository', err);
-      });
-
-    // Stage 2: Network restoration of last active session
+    // Single authoritative startup workflow:
+    // onHydrated renders saved devices and selected TV immediately (< 5ms) without waiting on network.
+    // Network restoration proceeds asynchronously and non-blockingly in the background.
     activeContainer.useCases.startupRestoration
-      .execute()
+      .execute({
+        onHydrated: ({ savedDevices, selectedDeviceId }) => {
+          activeContainer.store.dispatch(tvActions.savedDevicesLoaded(savedDevices));
+          if (selectedDeviceId) {
+            activeContainer.store.dispatch(tvActions.deviceSelected(selectedDeviceId));
+          }
+        },
+      })
       .then(result => {
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
           console.log(
             `[SmartRemote][Startup] Restoration completed: restored='${result.restoredDevice?.id ?? 'none'}', savedCount=${result.savedDevices.length}, error='${result.error?.message ?? 'none'}'`,
           );
         }
-        if (result.savedDevices.length > 0) {
-          activeContainer.store.dispatch(tvActions.savedDevicesLoaded(result.savedDevices));
-        }
-        if (result.restoredDevice) {
-          activeContainer.store.dispatch(tvActions.deviceSelected(result.restoredDevice.id));
-        } else if (result.lastSelectedId) {
-          activeContainer.store.dispatch(tvActions.deviceSelected(result.lastSelectedId));
-        }
       })
-      .catch(() => {
-        // Non-fatal restoration error (e.g. TV offline or no saved devices on first launch)
+      .catch(err => {
+        console.warn('[SmartRemote][Startup] Non-fatal restoration error:', err);
       });
 
     // Stage 3: AppState lifecycle monitoring for foreground liveness & background suspension

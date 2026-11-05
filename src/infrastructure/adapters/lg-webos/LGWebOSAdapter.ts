@@ -61,10 +61,9 @@ export interface LGWebOSEndpoint {
 }
 
 /**
- * Plain `ws://3000` is tried first because React Native cannot trust the TV's
- * self-signed certificate on `wss://3001`. Security implication: on `ws://` the
- * pairing key crosses the local network unencrypted. A host-scoped certificate
- * trust (native) is required before relying on wss for newer firmware.
+ * Legacy shared defaults preserve the verified iOS connection behavior.
+ * Android production registration supplies WSS-only endpoints, and its native
+ * transport independently refuses plaintext downgrade (including pointer sockets).
  */
 export const DEFAULT_LG_ENDPOINTS: readonly LGWebOSEndpoint[] = [
   { scheme: 'wss', port: 3001 },
@@ -159,7 +158,7 @@ export class LGWebOSAdapter
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.log(`[SmartRemote][Connect] Stage 2/5: Verifying TLS certificate trust for ${device.ipAddress}...`);
       }
-      const lastTLS = await this.trustManager.getLastStatus();
+      const lastTLS = await client.getTLSStatus() ?? await this.trustManager.getLastStatus();
       if (lastTLS) {
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
           console.log(
@@ -372,10 +371,30 @@ export class LGWebOSAdapter
     return await this.execute(LGWebOSCommandMapper.sendText(text), 'sendText', 'keyboardInput');
   }
 
-  async movePointer(deltaX: number, deltaY: number): Promise<void> {
+  private pointerReadiness = { waits: 0, totalMs: 0, maxMs: 0, invalidated: 0 };
+
+  public getPointerPerformanceSnapshot() {
+    return __DEV__ ? { ...this.pointerReadiness } : undefined;
+  }
+
+  async movePointer(deltaX: number, deltaY: number, isCurrent?: () => boolean): Promise<void> {
     this.requireReady('movePointer', 'pointerControl');
+    const attempt = this.attempt;
     try {
-      (await this.ensurePointer()).move(deltaX, deltaY);
+      const waiting = __DEV__ && !this.pointer?.isOpen();
+      const started = waiting ? Date.now() : 0;
+      const pointer = await this.ensurePointer();
+      if (waiting) {
+        const elapsed = Date.now() - started;
+        this.pointerReadiness.waits++;
+        this.pointerReadiness.totalMs += elapsed;
+        this.pointerReadiness.maxMs = Math.max(this.pointerReadiness.maxMs, elapsed);
+      }
+      if (attempt !== this.attempt || (isCurrent && !isCurrent())) {
+        if (__DEV__) this.pointerReadiness.invalidated++;
+        return;
+      }
+      pointer.move(deltaX, deltaY);
       if (this.capabilities.pointerControl === 'unknown') {
         this.capabilities = { ...this.capabilities, pointerControl: 'supported' };
       }

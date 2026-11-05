@@ -15,17 +15,19 @@ import {
   selectConnectionStatus,
   selectSavedDevices,
   selectSelectedDeviceId,
+  selectSelectedDevice,
 } from '../../store/selectors';
 import { tvActions } from '../../store/slices/tvSlice';
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
 import { isValidMacAddress } from '../../domain/utils/macValidator';
 import { useContainer } from '../context/ContainerContext';
-import { theme } from '../theme';
+import { theme, usePresentationLayout, platformPresentation } from '../theme';
 
 export const SettingsScreen: React.FC = () => {
   const container = useContainer();
   const dispatch = useAppDispatch();
   const insets = useSafeAreaInsets();
+  const layout = usePresentationLayout(insets.left + insets.right);
 
   const savedDevices = useAppSelector(selectSavedDevices);
   const activeDeviceId = useAppSelector(selectSelectedDeviceId);
@@ -35,11 +37,8 @@ export const SettingsScreen: React.FC = () => {
   const [isEditingMac, setIsEditingMac] = useState<boolean>(false);
   const [macInput, setMacInput] = useState<string>('');
   const [isTestingWake, setIsTestingWake] = useState<boolean>(false);
-  const managerDevice = container.connectionManager.getDevice();
-  const activeDevice =
-    savedDevices.find(d => d.id === activeDeviceId) ??
-    (managerDevice ? { ...managerDevice } : null) ??
-    (savedDevices.length > 0 ? savedDevices[0] : null);
+  const selectedDevice = useAppSelector(selectSelectedDevice);
+  const activeDevice = selectedDevice ?? (savedDevices.length > 0 ? savedDevices[0] : null);
 
   useEffect(() => {
     if (activeDevice?.macAddress) {
@@ -53,37 +52,30 @@ export const SettingsScreen: React.FC = () => {
     );
   }
 
-  // Hydrate saved devices from repository on mount
+  // Hydrate saved devices from authoritative hydration use case on mount if store is empty
   useEffect(() => {
     let isMounted = true;
     if (savedDevices.length === 0) {
       setIsLoading(true);
-      container.deviceRepository
-        .getAll()
-        .then(devices => {
+      container.useCases.hydrateDevices
+        .execute()
+        .then(({ savedDevices: devices, selectedDeviceId }) => {
           if (isMounted) {
             dispatch(tvActions.savedDevicesLoaded(devices));
-            setIsLoading(false);
+            if (selectedDeviceId && !activeDeviceId) {
+              dispatch(tvActions.deviceSelected(selectedDeviceId));
+            }
           }
         })
-        .catch(() => {
+        .catch(() => undefined)
+        .finally(() => {
           if (isMounted) setIsLoading(false);
         });
-    } else {
-      // Background sync: update repository devices if found
-      container.deviceRepository
-        .getAll()
-        .then(devices => {
-          if (isMounted && devices.length > 0) {
-            dispatch(tvActions.savedDevicesLoaded(devices));
-          }
-        })
-        .catch(() => undefined);
     }
     return () => {
       isMounted = false;
     };
-  }, [container, dispatch, savedDevices.length]);
+  }, [activeDeviceId, container.useCases.hydrateDevices, dispatch, savedDevices.length]);
 
   const handleForgetDevice = (deviceId: string, deviceName: string) => {
     Alert.alert(
@@ -184,9 +176,18 @@ export const SettingsScreen: React.FC = () => {
   };
 
   return (
+    <View style={[styles.container, { paddingTop: insets.top }]} >
     <ScrollView
       style={styles.container}
-      contentContainerStyle={[styles.contentContainer, { paddingTop: Math.max(insets.top, 16) }]}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={platformPresentation.keyboardDismissMode}
+      automaticallyAdjustKeyboardInsets
+      contentInsetAdjustmentBehavior="never"
+      contentContainerStyle={[styles.contentContainer, {
+        paddingTop: Math.max(0, 16 - insets.top),
+        paddingLeft: layout.pagePadding + insets.left,
+        paddingRight: layout.pagePadding + insets.right,
+      }]}
       testID="settings-screen"
     >
       <Text style={styles.screenTitle}>Settings & Diagnostics</Text>
@@ -196,23 +197,23 @@ export const SettingsScreen: React.FC = () => {
         <Text style={styles.cardHeader}>Current Connection</Text>
         {activeDevice ? (
           <View style={styles.infoBlock}>
-            <View style={styles.infoRow}>
+            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>TV Name:</Text>
-              <Text style={styles.infoValue}>{activeDevice.name}</Text>
+              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.name}</Text>
             </View>
-            <View style={styles.infoRow}>
+            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>IP Address:</Text>
-              <Text style={styles.infoValue}>{activeDevice.ipAddress}</Text>
+              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.ipAddress}</Text>
             </View>
-            <View style={styles.infoRow}>
+            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>Protocol:</Text>
-              <Text style={styles.infoValue}>{activeDevice.protocol}</Text>
+              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.protocol}</Text>
             </View>
-            <View style={styles.infoRow}>
+            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>Status:</Text>
               <Text
                 style={[
-                  styles.infoValue,
+                  styles.infoValue, layout.stackDetails && styles.infoValueStacked,
                   {
                     color:
                       connectionStatus === TVConnectionState.Connected
@@ -229,6 +230,7 @@ export const SettingsScreen: React.FC = () => {
 
             {connectionStatus === TVConnectionState.Connected ? (
               <TouchableOpacity
+                accessibilityRole="button"
                 style={styles.disconnectButton}
                 onPress={handleDisconnect}
                 testID="settings-disconnect-btn"
@@ -237,6 +239,7 @@ export const SettingsScreen: React.FC = () => {
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
+                accessibilityRole="button"
                 style={styles.reconnectButton}
                 onPress={handleReconnect}
                 testID="settings-reconnect-btn"
@@ -255,16 +258,16 @@ export const SettingsScreen: React.FC = () => {
         <View style={styles.card} testID="settings-wol-card">
           <Text style={styles.cardHeader}>Wake-on-LAN (Power On from Standby)</Text>
           <View style={styles.infoBlock}>
-            <View style={styles.infoRow}>
+            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>TV Target:</Text>
-              <Text style={styles.infoValue}>{activeDevice.name}</Text>
+              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.name}</Text>
             </View>
 
-            <View style={styles.infoRow}>
+            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>MAC Address:</Text>
               <Text
                 style={[
-                  styles.infoValue,
+                  styles.infoValue, layout.stackDetails && styles.infoValueStacked,
                   !activeDevice.macAddress && styles.infoValueMuted,
                 ]}
                 testID="settings-mac-display"
@@ -273,11 +276,11 @@ export const SettingsScreen: React.FC = () => {
               </Text>
             </View>
 
-            <View style={styles.infoRow}>
+            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>Wake Capability:</Text>
               <Text
                 style={[
-                  styles.infoValue,
+                  styles.infoValue, layout.stackDetails && styles.infoValueStacked,
                   {
                     color: activeDevice.macAddress ? theme.colors.connected : theme.colors.error,
                   },
@@ -298,10 +301,12 @@ export const SettingsScreen: React.FC = () => {
                   placeholderTextColor={theme.colors.textMuted}
                   autoCapitalize="characters"
                   autoCorrect={false}
+                  accessibilityLabel="TV MAC address"
                   testID="settings-mac-input"
                 />
-                <View style={styles.macEditButtonRow}>
+                <View style={[styles.macEditButtonRow, layout.stackForms && styles.buttonRowStacked]}>
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={styles.cancelMacButton}
                     onPress={() => {
                       setMacInput(activeDevice.macAddress ?? '');
@@ -312,6 +317,7 @@ export const SettingsScreen: React.FC = () => {
                     <Text style={styles.cancelMacText}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={styles.saveMacButton}
                     onPress={handleSaveMac}
                     testID="save-mac-btn"
@@ -321,8 +327,9 @@ export const SettingsScreen: React.FC = () => {
                 </View>
               </View>
             ) : (
-              <View style={styles.wolButtonRow}>
+              <View style={[styles.wolButtonRow, layout.stackForms && styles.buttonRowStacked]}>
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={styles.editMacButton}
                   onPress={() => {
                     setMacInput(activeDevice.macAddress ?? '');
@@ -337,6 +344,7 @@ export const SettingsScreen: React.FC = () => {
 
                 {Boolean(activeDevice.macAddress) && (
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={[styles.testWakeButton, isTestingWake && styles.controlDisabled]}
                     disabled={isTestingWake}
                     onPress={handleTestWake}
@@ -369,8 +377,7 @@ export const SettingsScreen: React.FC = () => {
           <Text style={styles.emptyText}>No saved TVs. Connect to a TV to save it for quick access.</Text>
         ) : (
           savedDevices.map(device => {
-            const isDeviceActive =
-              device.id === activeDeviceId || device.id === managerDevice?.id;
+            const isDeviceActive = device.id === activeDeviceId;
             const isDeviceConnected =
               isDeviceActive && connectionStatus === TVConnectionState.Connected;
             const isDeviceConnecting =
@@ -380,7 +387,7 @@ export const SettingsScreen: React.FC = () => {
                 connectionStatus === TVConnectionState.Pairing);
 
             return (
-              <View style={styles.savedItemRow} key={device.id} testID={`saved-device-${device.id}`}>
+              <View style={[styles.savedItemRow, layout.stackDetails && styles.savedItemStacked]} key={device.id} testID={`saved-device-${device.id}`}>
                 <View style={styles.savedItemInfo}>
                   <View style={styles.savedItemHeaderRow}>
                     <View
@@ -409,6 +416,7 @@ export const SettingsScreen: React.FC = () => {
                 <View style={styles.savedItemActions}>
                   {!isDeviceConnected && (
                     <TouchableOpacity
+                      accessibilityRole="button"
                       style={styles.selectDeviceButton}
                       onPress={() => handleConnectDevice(device)}
                       testID={`connect-saved-btn-${device.id}`}
@@ -419,6 +427,7 @@ export const SettingsScreen: React.FC = () => {
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity
+                    accessibilityRole="button"
                     style={styles.forgetButton}
                     onPress={() => handleForgetDevice(device.id, device.name)}
                     testID={`forget-btn-${device.id}`}
@@ -436,13 +445,13 @@ export const SettingsScreen: React.FC = () => {
       <View style={styles.card}>
         <Text style={styles.cardHeader}>Platform & Network Architecture</Text>
         <View style={styles.infoBlock}>
-          <View style={styles.infoRow}>
+          <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
             <Text style={styles.infoLabel}>Platform:</Text>
-            <Text style={styles.infoValue}>{Platform.OS.toUpperCase()}</Text>
+            <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{Platform.OS.toUpperCase()}</Text>
           </View>
-          <View style={styles.infoRow}>
+          <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
             <Text style={styles.infoLabel}>Storage:</Text>
-            <Text style={styles.infoValue}>Keychain (Secure) + AsyncStorage</Text>
+            <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>Keychain (Secure) + AsyncStorage</Text>
           </View>
 
           <Text style={styles.diagNoticeTitle}>Local Network Privacy & Multicast</Text>
@@ -454,6 +463,7 @@ export const SettingsScreen: React.FC = () => {
         </View>
       </View>
     </ScrollView>
+    </View>
   );
 };
 
@@ -463,6 +473,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   contentContainer: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     padding: theme.spacing.md,
     paddingBottom: theme.spacing.xxl,
   },
@@ -489,18 +502,28 @@ const styles = StyleSheet.create({
   infoBlock: {
     marginTop: 4,
   },
+  infoRowStacked: { flexDirection: 'column', gap: 4 },
+  infoValueStacked: { textAlign: 'left', flex: undefined },
+  savedItemStacked: { flexDirection: 'column', alignItems: 'stretch', gap: 12 },
+  buttonRowStacked: { flexDirection: 'column', alignItems: 'stretch' },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 6,
+    gap: 12,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
   infoLabel: {
+    flexShrink: 1,
+    minWidth: 0,
     ...theme.typography.body,
-    color: theme.colors.textMuted,
+    color: theme.colors.textSecondary,
   },
   infoValue: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
     ...theme.typography.body,
     color: theme.colors.textPrimary,
     fontWeight: '600',
@@ -516,6 +539,9 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   disconnectButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
     marginTop: theme.spacing.md,
     backgroundColor: 'rgba(255, 82, 82, 0.15)',
     paddingVertical: theme.spacing.sm,
@@ -530,6 +556,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   reconnectButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
     marginTop: theme.spacing.md,
     backgroundColor: 'rgba(0, 210, 255, 0.15)',
     paddingVertical: theme.spacing.sm,
@@ -549,6 +578,9 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.md,
   },
   editMacButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
     flex: 1,
     backgroundColor: '#1C2232',
     paddingVertical: theme.spacing.sm,
@@ -563,6 +595,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   testWakeButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
     flex: 1,
     backgroundColor: 'rgba(48, 209, 88, 0.15)',
     paddingVertical: theme.spacing.sm,
@@ -593,6 +628,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   macTextInput: {
+    minHeight: 48,
     backgroundColor: '#1C2232',
     color: theme.colors.textPrimary,
     borderRadius: theme.borderRadius.sm,
@@ -610,6 +646,8 @@ const styles = StyleSheet.create({
     gap: theme.spacing.sm,
   },
   cancelMacButton: {
+    minHeight: 48,
+    justifyContent: 'center',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: theme.borderRadius.sm,
@@ -619,6 +657,8 @@ const styles = StyleSheet.create({
     color: theme.colors.textMuted,
   },
   saveMacButton: {
+    minHeight: 48,
+    justifyContent: 'center',
     backgroundColor: theme.colors.secondary,
     paddingVertical: 6,
     paddingHorizontal: 14,
@@ -672,6 +712,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.disconnected,
   },
   savedItemName: {
+    flex: 1,
+    minWidth: 0,
     ...theme.typography.subtitle,
     color: theme.colors.textPrimary,
     fontSize: 14,
@@ -683,10 +725,13 @@ const styles = StyleSheet.create({
   },
   savedItemActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
   },
   selectDeviceButton: {
+    minHeight: 48,
+    justifyContent: 'center',
     paddingHorizontal: theme.spacing.sm,
     paddingVertical: 6,
     borderRadius: theme.borderRadius.sm,
@@ -700,6 +745,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   forgetButton: {
+    minHeight: 48,
+    justifyContent: 'center',
     paddingHorizontal: theme.spacing.md,
     paddingVertical: 6,
     borderRadius: theme.borderRadius.sm,

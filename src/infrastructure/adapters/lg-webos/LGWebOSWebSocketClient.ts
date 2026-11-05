@@ -120,6 +120,10 @@ export class LGWebOSWebSocketClient {
     return this.opened && this.socket !== null;
   }
 
+  async getTLSStatus() {
+    return this.socket?.getTLSStatus?.() ?? null;
+  }
+
   getLastCloseError(): Error | null {
     return this.lastCloseError;
   }

@@ -76,7 +76,7 @@ const tvSlice = createSlice({
     deviceForgotten(state, action: PayloadAction<string>) {
       state.savedDevices = state.savedDevices.filter(d => d.id !== action.payload);
       if (state.selectedDeviceId === action.payload) {
-        state.selectedDeviceId = null;
+        state.selectedDeviceId = state.savedDevices.length > 0 ? state.savedDevices[0].id : null;
       }
     },
     capabilitiesChanged(state, action: PayloadAction<TVCapabilities | null>) {

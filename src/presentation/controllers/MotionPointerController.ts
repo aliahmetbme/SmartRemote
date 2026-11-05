@@ -1,3 +1,5 @@
+import { Scheduler } from '../../domain/interfaces/IScheduler';
+import { MotionPerformanceMetrics } from './MotionPerformanceMetrics';
 import {
   IMotionSensorService,
   DeviceMotionSample,
@@ -81,6 +83,7 @@ export interface MotionControllerOptions {
    * Default: () => Date.now().
    */
   now?: () => number;
+  scheduler?: Scheduler;
 }
 
 export interface MotionDiagnosticData {
@@ -167,6 +170,12 @@ export class MotionPointerController {
   private accumulatedDeltaX: number = 0;
   private accumulatedDeltaY: number = 0;
 
+  private readonly scheduler: Scheduler;
+  private flushTimer: unknown = null;
+  private generation = 0;
+  private lifecycle = 0;
+  private latestMovementTime = 0;
+  public readonly performanceMetrics = new MotionPerformanceMetrics();
   private lastDispatchTime: number = 0;
   private isCommandInFlight: boolean = false;
   private errorCooldownUntil: number = 0;
@@ -194,6 +203,10 @@ export class MotionPointerController {
     this.diagnosticMode = options.diagnosticMode ?? false;
     this.onDiagnosticSample = options.onDiagnosticSample;
     this.nowFn = options.now ?? (() => Date.now());
+    this.scheduler = options.scheduler ?? {
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    };
   }
 
   // --- Configuration Accessors ---
@@ -246,12 +259,18 @@ export class MotionPointerController {
   public async start(): Promise<boolean> {
     if (this.isRunning) return true;
 
+    const lifecycle = ++this.lifecycle;
     const available = await this.sensorService.isAvailable();
+    if (lifecycle !== this.lifecycle) return false;
     if (!available) {
       return false;
     }
 
     await this.sensorService.start(this.updateIntervalMs, this.handleMotionSample.bind(this));
+    if (lifecycle !== this.lifecycle) {
+      await this.sensorService.stop();
+      return false;
+    }
     this.isRunning = true;
     return true;
   }
@@ -260,7 +279,9 @@ export class MotionPointerController {
    * Stops sensor updates and cleans up subscriptions.
    */
   public async stop(): Promise<void> {
-    if (!this.isRunning) return;
+    ++this.lifecycle;
+    this.isRunning = false;
+    this.resetMovementState();
 
     try {
       await this.sensorService.stop();
@@ -268,8 +289,6 @@ export class MotionPointerController {
       // Safe teardown
     }
 
-    this.isRunning = false;
-    this.resetMovementState();
   }
 
   /**
@@ -290,13 +309,16 @@ export class MotionPointerController {
   }
 
   private resetMovementState(): void {
+    ++this.generation;
+    if (this.flushTimer !== null) this.scheduler.clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.performanceMetrics.invalidate(this.accumulatedDeltaX, this.accumulatedDeltaY);
     this.lastAttitude = null;
     this.lastSampleTimestamp = null;
     this.smoothedDeltaX = 0;
     this.smoothedDeltaY = 0;
     this.accumulatedDeltaX = 0;
     this.accumulatedDeltaY = 0;
-    this.isCommandInFlight = false;
     this.sampleCount = 0;
     this.sampleRateWindowStart = 0;
     this.currentSampleRateHz = 0;
@@ -317,6 +339,8 @@ export class MotionPointerController {
       return;
     }
 
+    const arrival = this.nowFn();
+    this.performanceMetrics.arrival(arrival);
     const currentAttitude = sample.attitude;
     if (!this.lastAttitude) {
       // First frame of engagement anchors baseline
@@ -468,6 +492,10 @@ export class MotionPointerController {
       Math.min(maxAccumulated, this.accumulatedDeltaY),
     );
 
+    this.latestMovementTime = now;
+    this.performanceMetrics.backlog(this.accumulatedDeltaX, this.accumulatedDeltaY, this.isCommandInFlight || this.flushTimer !== null);
+    this.performanceMetrics.processing(this.nowFn() - arrival);
+
     // Cache latest diagnostic data for throttled dispatch logging
     this.latestDiagRates = {
       rot: rot ? { ...rot } : { x: 0, y: 0, z: 0 },
@@ -485,22 +513,27 @@ export class MotionPointerController {
    * no command is in flight, and no error cooldown is active.
    */
   private tryDispatchMovement(): void {
-    if (!this.isEngaged) {
-      return;
-    }
-
+    if (!this.isRunning || !this.isEngaged || this.isCommandInFlight) return;
+    if (Math.round(this.accumulatedDeltaX) === 0 && Math.round(this.accumulatedDeltaY) === 0) return;
     const now = this.nowFn();
-    if (now - this.lastDispatchTime < this.throttleMs) {
+    // Never replay a backlog after a prolonged JS/transport stall.
+    if (now - this.latestMovementTime > 250) {
+      this.performanceMetrics.invalidate(this.accumulatedDeltaX, this.accumulatedDeltaY);
+      this.accumulatedDeltaX = this.accumulatedDeltaY = 0;
       return;
     }
-
-    if (this.isCommandInFlight) {
+    const wait = Math.max(this.lastDispatchTime + this.throttleMs, this.errorCooldownUntil) - now;
+    if (wait > 0) {
+      if (this.flushTimer === null) {
+        this.flushTimer = this.scheduler.setTimeout(() => {
+          this.flushTimer = null;
+          this.tryDispatchMovement();
+        }, Math.max(1, Math.ceil(wait)));
+      }
       return;
     }
-
-    if (now < this.errorCooldownUntil) {
-      return;
-    }
+    if (this.flushTimer !== null) this.scheduler.clearTimeout(this.flushTimer);
+    this.flushTimer = null;
 
     const sendX = Math.round(this.accumulatedDeltaX);
     const sendY = Math.round(this.accumulatedDeltaY);
@@ -563,28 +596,34 @@ export class MotionPointerController {
       this.onDiagnosticSample?.(diagData);
     }
 
+    this.performanceMetrics.dispatch(now);
+    const generation = this.generation;
     this.lastDispatchTime = now;
     this.isCommandInFlight = true;
 
-    this.commandHandler(clampedX, clampedY)
-      .catch(() => {
-        // Enforce cooldown on error to protect network from hammering closed socket
+    // Keep synchronous throws on the same error path as Promise rejections.
+    let command: Promise<void>;
+    try { command = this.commandHandler(clampedX, clampedY); }
+    catch (error) { command = Promise.reject(error); }
+    const finish = () => {
+      this.isCommandInFlight = false;
+      this.performanceMetrics.completion(this.nowFn() - now);
+      this.tryDispatchMovement();
+    };
+    command.then(finish, () => {
+      this.performanceMetrics.rejected++;
+      if (generation === this.generation) {
         this.errorCooldownUntil = this.nowFn() + 1500;
-        this.accumulatedDeltaX = 0;
-        this.accumulatedDeltaY = 0;
-      })
-      .finally(() => {
-        this.isCommandInFlight = false;
-        // Coalescing continuation: if additional movement accumulated during in-flight dispatch
-        // and throttle interval has elapsed, immediately fire the next step.
-        if (
-          this.isEngaged &&
-          (Math.round(this.accumulatedDeltaX) !== 0 || Math.round(this.accumulatedDeltaY) !== 0)
-        ) {
-          if (this.nowFn() - this.lastDispatchTime >= this.throttleMs) {
-            this.tryDispatchMovement();
-          }
-        }
-      });
+        this.performanceMetrics.invalidate(this.accumulatedDeltaX, this.accumulatedDeltaY);
+        this.accumulatedDeltaX = this.accumulatedDeltaY = 0;
+      }
+      finish();
+    });
+  }
+
+  public getMovementGeneration(): number { return this.generation; }
+
+  public getPerformanceSnapshot() {
+    return this.performanceMetrics.snapshot(this.flushTimer !== null, this.isCommandInFlight);
   }
 }

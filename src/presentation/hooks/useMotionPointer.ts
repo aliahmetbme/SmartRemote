@@ -18,6 +18,7 @@ export interface UseMotionPointerResult {
   isPointerSupported: boolean;
   isSensorAvailable: boolean | null;
   isAiming: boolean;
+  sensorStartFailed: boolean;
   sensitivity: number;
   setSensitivity: (value: number) => void;
   invertX: boolean;
@@ -29,6 +30,7 @@ export interface UseMotionPointerResult {
   diagData: MotionDiagnosticData | null;
   setEngaged: (engaged: boolean) => void;
   recenter: () => void;
+  getPerformanceSnapshot: () => ReturnType<MotionPointerController['getPerformanceSnapshot']>;
 }
 
 /**
@@ -47,6 +49,7 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
   const isPointerSupported = pointerState !== 'unsupported';
 
   const [isSensorAvailable, setIsSensorAvailable] = useState<boolean | null>(null);
+  const [sensorStartFailed, setSensorStartFailed] = useState(false);
   const [isAiming, setIsAiming] = useState<boolean>(false);
   const [sensitivity, setSensitivityState] = useState<number>(1.0);
   const [invertX, setInvertXState] = useState<boolean>(false);
@@ -54,6 +57,13 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
   const [isDiagMode, setIsDiagModeState] = useState<boolean>(false);
   const [diagData, setDiagData] = useState<MotionDiagnosticData | null>(null);
 
+  const samplingOnAim = container.motionSamplingOnAim;
+  const aimRevision = useRef(0);
+  const invalidateAim = useCallback(() => ++aimRevision.current, []);
+  const engagedConnectionRevision = useRef<number | null>(null);
+  const samplingWork = useRef<Promise<unknown>>(Promise.resolve());
+  const sensorAvailableRef = useRef(isSensorAvailable);
+  sensorAvailableRef.current = isSensorAvailable;
   const controllerRef = useRef<MotionPointerController | null>(null);
   const isConnectedRef = useRef(isConnected);
   isConnectedRef.current = isConnected;
@@ -72,15 +82,17 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
       container.motionSensorService,
       async (deltaX, deltaY) => {
         if (!isConnectedRef.current || !isPointerSupportedRef.current) return;
-        try {
-          await container.useCases.sendRemoteCommand.execute({
-            type: 'movePointer',
-            deltaX,
-            deltaY,
-          });
-        } catch {
-          // Non-fatal pointer frame drop
-        }
+        const generation = controller.getMovementGeneration();
+        const session = container.connectionManager.getOperationRevision();
+        if (samplingOnAim && engagedConnectionRevision.current !== session) return;
+        await container.useCases.sendRemoteCommand.execute({
+          type: 'movePointer',
+          isCurrent: () => controller.getIsRunning() && controller.getIsEngaged() &&
+            controller.getMovementGeneration() === generation && isConnectedRef.current &&
+            container.connectionManager.getOperationRevision() === session,
+          deltaX,
+          deltaY,
+        });
       },
       {
         sensitivity,
@@ -89,6 +101,7 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
         diagnosticMode: isDiagMode,
         onDiagnosticSample: sample => {
           if (isMounted) {
+            if (__DEV__) console.log('[SmartRemote][MotionPerformance]', controller.getPerformanceSnapshot());
             setDiagData(sample);
           }
         },
@@ -97,7 +110,10 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
 
     controllerRef.current = controller;
 
-    controller.start().then(available => {
+    const initialize = samplingOnAim
+      ? container.motionSensorService.isAvailable()
+      : controller.start();
+    initialize.then(available => {
       if (isMounted) {
         setIsSensorAvailable(available);
       }
@@ -107,14 +123,24 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
       }
     });
 
+    const unsubscribe = container.motionSensorService.onInterrupted?.(() => {
+      invalidateAim();
+      engagedConnectionRevision.current = null;
+      controller.setEngaged(false);
+      controller.stop().catch(() => undefined);
+      setIsAiming(false);
+      onActiveChangeRef.current?.(false);
+    });
     return () => {
       isMounted = false;
+      invalidateAim();
+      unsubscribe?.();
       controller.stop().catch(() => undefined);
       controllerRef.current = null;
     };
     // Re-create controller only if sensor service changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [container.motionSensorService]);
+  }, [container.motionSensorService, samplingOnAim]);
 
   // 2. Dynamically apply settings without destroying controller
   const setSensitivity = useCallback((value: number) => {
@@ -138,18 +164,47 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
   }, []);
 
   const setEngaged = useCallback((engaged: boolean) => {
-    // If not connected or pointer unsupported, disallow aiming
-    if (engaged && (!isConnectedRef.current || !isPointerSupportedRef.current)) {
+    const controller = controllerRef.current;
+    const canEngage = engaged && isConnectedRef.current && isPointerSupportedRef.current &&
+      (!samplingOnAim || sensorAvailableRef.current === true);
+    const revision = invalidateAim();
+    if (!canEngage || !controller) {
+      engagedConnectionRevision.current = null;
       setIsAiming(false);
-      controllerRef.current?.setEngaged(false);
+      controller?.setEngaged(false);
+      if (samplingOnAim && controller) {
+        const stop = controller.stop();
+        samplingWork.current = Promise.allSettled([samplingWork.current, stop]);
+      }
       onActiveChangeRef.current?.(false);
       return;
     }
 
-    setIsAiming(engaged);
-    controllerRef.current?.setEngaged(engaged);
-    onActiveChangeRef.current?.(engaged);
-  }, []);
+    setIsAiming(true);
+    onActiveChangeRef.current?.(true);
+    if (!samplingOnAim) {
+      controller.setEngaged(true);
+      return;
+    }
+
+    engagedConnectionRevision.current = container.connectionManager.getOperationRevision();
+    setSensorStartFailed(false);
+    samplingWork.current = samplingWork.current.then(async () => {
+      if (revision !== aimRevision.current) return;
+      try {
+        const available = await controller.start();
+        if (revision !== aimRevision.current) return;
+        if (!available) throw new Error('Motion sensors are unavailable');
+        controller.setEngaged(true);
+      } catch {
+        if (revision !== aimRevision.current) return;
+        engagedConnectionRevision.current = null;
+        setSensorStartFailed(true);
+        setIsAiming(false);
+        onActiveChangeRef.current?.(false);
+      }
+    });
+  }, [samplingOnAim, invalidateAim, container.connectionManager]);
 
   const recenter = useCallback(() => {
     controllerRef.current?.recenter();
@@ -158,24 +213,37 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
   // 3. If connection drops while aiming, disengage immediately
   useEffect(() => {
     if ((!isConnected || !isPointerSupported) && isAiming) {
+      controllerRef.current?.performanceMetrics.interruption('connection');
       setEngaged(false);
     }
   }, [isConnected, isPointerSupported, isAiming, setEngaged]);
+
+  // Stop Android sampling even if React batches a drop and reconnect into one render.
+  useEffect(() => {
+    if (!samplingOnAim) return;
+    return container.connectionManager.subscribe(snapshot => {
+      const revision = engagedConnectionRevision.current;
+      if (revision !== null && (snapshot.state !== TVConnectionState.Connected ||
+          revision !== container.connectionManager.getOperationRevision())) {
+        controllerRef.current?.performanceMetrics.interruption('connection');
+        setEngaged(false);
+      }
+    });
+  }, [container.connectionManager, samplingOnAim, setEngaged]);
 
   // 4. Handle AppState backgrounding
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState !== 'active') {
-        setIsAiming(false);
-        controllerRef.current?.setEngaged(false);
-        onActiveChangeRef.current?.(false);
+        controllerRef.current?.performanceMetrics.interruption('appState');
+        setEngaged(false);
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, []);
+  }, [setEngaged]);
 
   // 5. Clean up parent scroll lock on unmount
   useEffect(() => {
@@ -189,6 +257,7 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
     isPointerSupported,
     isSensorAvailable,
     isAiming,
+    sensorStartFailed,
     sensitivity,
     setSensitivity,
     invertX,
@@ -200,5 +269,6 @@ export function useMotionPointer(options: UseMotionPointerOptions = {}): UseMoti
     diagData,
     setEngaged,
     recenter,
+    getPerformanceSnapshot: () => controllerRef.current?.getPerformanceSnapshot(),
   };
 }

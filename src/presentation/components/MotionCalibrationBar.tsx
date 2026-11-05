@@ -88,21 +88,23 @@ export const MotionCalibrationBar: React.FC<MotionCalibrationBarProps> = ({
       </View>
 
       {/* Diagnostic Mode Toggle (Raw 1:1, Acc & Smooth OFF) */}
-      <View style={styles.diagToggleRow}>
-        <TouchableOpacity
-          style={[styles.diagToggleBtn, isDiagMode && styles.diagToggleBtnActive]}
-          onPress={onToggleDiag}
-          testID="motion-diag-toggle"
-          accessibilityLabel="Toggle Diagnostic Mode"
-          accessibilityRole="button"
-        >
-          <Text style={[styles.diagToggleBtnText, isDiagMode && styles.diagToggleBtnTextActive]}>
-            {isDiagMode ? '✓ DIAGNOSTIC MODE (1:1 RAW) ACTIVE' : 'DIAGNOSTIC MODE: OFF'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {__DEV__ && (
+        <View style={styles.diagToggleRow}>
+          <TouchableOpacity
+            style={[styles.diagToggleBtn, isDiagMode && styles.diagToggleBtnActive]}
+            onPress={onToggleDiag}
+            testID="motion-diag-toggle"
+            accessibilityLabel="Toggle Diagnostic Mode"
+            accessibilityRole="button"
+          >
+            <Text style={[styles.diagToggleBtnText, isDiagMode && styles.diagToggleBtnTextActive]}>
+              {isDiagMode ? '✓ DIAGNOSTIC MODE (1:1 RAW) ACTIVE' : 'DIAGNOSTIC MODE: OFF'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {children}
+      {__DEV__ && children}
     </View>
   );
 };

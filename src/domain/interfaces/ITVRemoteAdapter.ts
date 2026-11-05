@@ -57,7 +57,7 @@ export interface IInputSwitchAdapter {
   openInput(inputId: string): Promise<void>;
 }
 export interface IPointerAdapter {
-  movePointer(deltaX: number, deltaY: number): Promise<void>;
+  movePointer(deltaX: number, deltaY: number, isCurrent?: () => boolean): Promise<void>;
 }
 export interface ITextInputAdapter {
   sendText(text: string): Promise<void>;

@@ -8,6 +8,8 @@ export interface DirectionPadProps {
   onSelect: () => void;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
+  size?: number;
+  centerDiameter?: number;
 }
 
 export const DirectionPad: React.FC<DirectionPadProps> = ({
@@ -15,67 +17,81 @@ export const DirectionPad: React.FC<DirectionPadProps> = ({
   onSelect,
   disabled = false,
   style,
+  size = 196,
+  centerDiameter,
 }) => {
+  const centerSize = centerDiameter ?? (size >= 180 ? 72 : 64);
   return (
-    <View style={[styles.dpadContainer, style]} testID="dpad-cluster">
+    <View style={[styles.dpadContainer, { width: size, height: size, borderRadius: size / 2 }, style]} testID="dpad-cluster">
       {/* Up */}
       <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadUp, disabled && styles.controlDisabled]}
+        style={[styles.dpadArrow, styles.dpadUp, centerDiameter !== undefined && styles.compactVerticalArrow, disabled && styles.controlDisabled]}
         disabled={disabled}
+        accessibilityState={{ disabled }}
         onPress={() => onNavigate(NavigationDirection.Up)}
         testID="btn-nav-up"
         accessibilityLabel="Navigate Up"
         accessibilityRole="button"
       >
-        <Text style={styles.arrowText}>▲</Text>
+        <Text style={styles.arrowText} allowFontScaling={false}>▲</Text>
       </TouchableOpacity>
 
       {/* Down */}
       <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadDown, disabled && styles.controlDisabled]}
+        style={[styles.dpadArrow, styles.dpadDown, centerDiameter !== undefined && styles.compactVerticalArrow, disabled && styles.controlDisabled]}
         disabled={disabled}
+        accessibilityState={{ disabled }}
         onPress={() => onNavigate(NavigationDirection.Down)}
         testID="btn-nav-down"
         accessibilityLabel="Navigate Down"
         accessibilityRole="button"
       >
-        <Text style={styles.arrowText}>▼</Text>
+        <Text style={styles.arrowText} allowFontScaling={false}>▼</Text>
       </TouchableOpacity>
 
       {/* Left */}
       <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadLeft, disabled && styles.controlDisabled]}
+        style={[styles.dpadArrow, styles.dpadLeft, centerDiameter !== undefined && styles.compactHorizontalArrow, disabled && styles.controlDisabled]}
         disabled={disabled}
+        accessibilityState={{ disabled }}
         onPress={() => onNavigate(NavigationDirection.Left)}
         testID="btn-nav-left"
         accessibilityLabel="Navigate Left"
         accessibilityRole="button"
       >
-        <Text style={styles.arrowText}>◀</Text>
+        <Text style={styles.arrowText} allowFontScaling={false}>◀</Text>
       </TouchableOpacity>
 
       {/* Right */}
       <TouchableOpacity
-        style={[styles.dpadArrow, styles.dpadRight, disabled && styles.controlDisabled]}
+        style={[styles.dpadArrow, styles.dpadRight, centerDiameter !== undefined && styles.compactHorizontalArrow, disabled && styles.controlDisabled]}
         disabled={disabled}
+        accessibilityState={{ disabled }}
         onPress={() => onNavigate(NavigationDirection.Right)}
         testID="btn-nav-right"
         accessibilityLabel="Navigate Right"
         accessibilityRole="button"
       >
-        <Text style={styles.arrowText}>▶</Text>
+        <Text style={styles.arrowText} allowFontScaling={false}>▶</Text>
       </TouchableOpacity>
 
       {/* Center OK */}
       <TouchableOpacity
-        style={[styles.dpadCenter, disabled && styles.controlDisabled]}
+        style={[styles.dpadCenter, { width: centerSize, height: centerSize, borderRadius: centerSize / 2 }, disabled && styles.controlDisabled]}
         disabled={disabled}
+        accessibilityState={{ disabled }}
         onPress={onSelect}
         testID="btn-nav-ok"
         accessibilityLabel="OK / Select"
         accessibilityRole="button"
       >
-        <Text style={styles.dpadCenterText}>OK</Text>
+        <Text
+          style={styles.dpadCenterText}
+          numberOfLines={centerDiameter === undefined ? undefined : 1}
+          adjustsFontSizeToFit={centerDiameter !== undefined}
+        >
+          OK
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -93,39 +109,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
+  compactVerticalArrow: { width: 48 },
+  compactHorizontalArrow: { height: 48 },
   dpadArrow: {
     position: 'absolute',
     justifyContent: 'center',
     alignItems: 'center',
   },
   dpadUp: {
-    top: 4,
+    top: 0,
     width: 60,
-    height: 44,
+    height: 48,
   },
   dpadDown: {
-    bottom: 4,
+    bottom: 0,
     width: 60,
-    height: 44,
+    height: 48,
   },
   dpadLeft: {
-    left: 4,
-    width: 44,
+    left: 0,
+    width: 48,
     height: 60,
   },
   dpadRight: {
-    right: 4,
-    width: 44,
+    right: 0,
+    width: 48,
     height: 60,
   },
   arrowText: {
     fontSize: 18,
-    color: '#B6BECE',
+    color: theme.colors.controlLabel,
   },
   dpadCenter: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: '#263045',
     borderWidth: 2,
     borderColor: '#3F4E70',
@@ -139,6 +157,6 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
   },
   controlDisabled: {
-    opacity: 0.45,
+    opacity: theme.remoteDisabledOpacity,
   },
 });

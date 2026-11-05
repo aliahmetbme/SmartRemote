@@ -315,7 +315,20 @@ describe('LGWebOSAdapter commands', () => {
     ]);
   });
 
-  it('toggles mute based on the TV state', async () => {
+  it('invalidates motion across the pointer readiness await without writing a frame', async () => {
+    const { adapter, server } = setup();
+    await adapter.connect(device);
+    let current = true;
+    const command = adapter.movePointer(5, 6, () => current);
+    current = false;
+    await command;
+    expect(server.pointerFrames).toEqual([]);
+    await adapter.movePointer(7, 8, () => true);
+    expect(server.pointerFrames).toEqual(['type:move\ndx:7\ndy:8\ndown:0\n\n']);
+    await adapter.disconnect();
+  });
+
+  it('toggles mute based on the TV state' , async () => {
     const { adapter, server } = setup({ muted: false });
     await adapter.connect(device);
     await adapter.mute();

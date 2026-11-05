@@ -283,6 +283,43 @@ describe('RemoteScreen Component', () => {
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'openInput', inputId: 'HDMI_1' });
   });
 
+  it.each([true, false])('resolves Android Motion capability from the sensor service (%s)', async available => {
+    const { container, render } = createTestEnv();
+    container.motionSamplingOnAim = true;
+    jest.spyOn(container.motionSensorService, 'isAvailable').mockResolvedValue(available);
+    const start = jest.spyOn(container.motionSensorService, 'start');
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => { renderer = render(); });
+    const motion = renderer.root.findByProps({ testID: 'tab-motion' });
+    expect(motion.props.disabled).toBe(!available);
+    if (available) {
+      await ReactTestRenderer.act(async () => { motion.props.onPress(); });
+      expect(renderer.root.findAllByProps({ testID: 'motion-surface' })).not.toHaveLength(0);
+    }
+    expect(start).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+  });
+
+  it('discards an app launch resolved after switching TVs', async () => {
+    const { container, render } = createTestEnv({ appLaunching: true });
+    await container.useCases.connectTV.execute(dummyDevice);
+    let finishLookup!: (id: string) => void;
+    jest.spyOn(container.useCases.getInstalledApps, 'resolveAppId').mockReturnValue(
+      new Promise(resolve => { finishLookup = resolve; }),
+    );
+    const send = jest.spyOn(container.useCases.sendRemoteCommand, 'execute');
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => { renderer = render(); });
+    await ReactTestRenderer.act(async () => {
+      renderer.root.findByProps({ testID: 'btn-app-netflix' }).props.onPress();
+      await container.useCases.connectTV.execute(makeWebOSDevice({ id: 'other-tv' }));
+      finishLookup('netflix');
+    });
+    expect(send).not.toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => { renderer.unmount(); });
+    await container.connectionManager.disconnect();
+  });
+
   it('allows safe command attempts when capability is unknown', async () => {
     const { container, render } = createTestEnv();
 
@@ -654,10 +691,14 @@ describe('RemoteScreen Component', () => {
     });
 
     const rootContainer = renderer!.root.findByProps({ testID: 'remote-screen' });
-    // Root container contentContainerStyle has paddingTop matching Math.max(testMetrics.insets.top, 16) = 59
+    // Reserve the inset outside scrolling content; apply it exactly once.
     const contentStyle = Array.isArray(rootContainer.props.contentContainerStyle)
       ? Object.assign({}, ...rootContainer.props.contentContainerStyle)
       : rootContainer.props.contentContainerStyle;
-    expect(contentStyle.paddingTop).toBe(testMetrics.insets.top);
+    const safeArea = renderer!.root.findByProps({ testID: 'remote-safe-area' });
+    const frameStyle = Object.assign({}, ...safeArea.props.style);
+    expect(frameStyle.paddingTop).toBe(testMetrics.insets.top);
+    expect(contentStyle.paddingTop + frameStyle.paddingTop).toBe(testMetrics.insets.top);
+    expect(contentStyle.paddingBottom).toBe(24);
   });
 });

@@ -50,6 +50,7 @@ describe('MotionPointerController', () => {
   });
 
   beforeEach(() => {
+    jest.useFakeTimers();
     mockSensor = new MockMotionSensorService();
     commandHandler = jest.fn().mockResolvedValue(undefined);
     controller = new MotionPointerController(mockSensor, commandHandler, {
@@ -136,6 +137,12 @@ describe('MotionPointerController', () => {
       mockSensor.emit(makeSample(-0.05, 0.0));
       expect(commandHandler).toHaveBeenCalledTimes(1);
     });
+  });
+
+  afterEach(async () => {
+    await controller.stop();
+    jest.clearAllTimers();
+    jest.useRealTimers();
   });
 
   describe('Coordinate Mapping & Movement Direction', () => {

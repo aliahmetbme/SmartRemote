@@ -1,3 +1,4 @@
+import type { TLSStatus } from './LGTVCertificateTrustManager';
 import {
   NativeEventEmitter,
   NativeModules,
@@ -24,13 +25,14 @@ export interface IWebSocketTransport {
   send(data: string): void;
   close(code?: number, reason?: string): void;
   ping?(): Promise<void>;
+  getTLSStatus?(): Promise<TLSStatus | null>;
 }
 
 export type WebSocketFactory = (url: string) => IWebSocketTransport;
 
 /**
  * Default React Native WebSocket transport.
- * Used for standard web sockets, non-LG connections, and Android fallback.
+ * Used for standard web sockets and non-LG connections. Android LG connections fail closed.
  */
 export const reactNativeWebSocketFactory: WebSocketFactory = url => {
   if (typeof WebSocket === 'undefined') {
@@ -52,7 +54,7 @@ export interface LGNativeWebSocketEventMap {
 let nextSocketId = 1;
 
 /**
- * Dedicated iOS native WebSocket transport backed by NSURLSessionWebSocketTask.
+ * Native LG transport backed by NSURLSessionWebSocketTask on iOS and OkHttp on Android.
  * Bypasses SocketRocket CFStream TLS handshake limitations on modern iOS,
  * validating certificates directly against the anchored LG intermediate CA.
  */
@@ -71,13 +73,21 @@ export class LGNativeWebSocketTransport implements IWebSocketTransport {
 
   constructor(
     url: string,
-    nativeModule = Platform.OS === 'ios' ? NativeModules?.LGNativeWebSocketModule : null,
+    nativeModule = Platform.OS === 'android'
+      ? NativeModules?.LGAndroidWebSocketModule
+      : Platform.OS === 'ios' ? NativeModules?.LGNativeWebSocketModule : null,
     customEmitter?: NativeEventEmitter,
   ) {
     this.socketId = nextSocketId++;
     this.url = url;
     this.nativeModule = nativeModule;
     this.emitter = customEmitter ?? (nativeModule ? new NativeEventEmitter(nativeModule) : null);
+    if (typeof nativeModule?.ping === 'function') {
+      this.ping = async () => {
+        if (this.closed) throw new Error('WebSocket is closed');
+        await nativeModule.ping(this.socketId);
+      };
+    }
     this.init();
   }
 
@@ -159,11 +169,11 @@ export class LGNativeWebSocketTransport implements IWebSocketTransport {
     }
   }
 
-  async ping(): Promise<void> {
-    if (this.closed || !this.nativeModule) {
-      throw new Error('WebSocket is closed or native module unavailable');
-    }
-    await this.nativeModule.ping(this.socketId);
+  // OkHttp uses protocol ping internally; it does not expose a false JS ping acknowledgement.
+  public ping?: () => Promise<void>;
+
+  async getTLSStatus(): Promise<TLSStatus | null> {
+    return this.nativeModule?.getTLSStatus ? this.nativeModule.getTLSStatus(this.socketId) : null;
   }
 
   send(data: string): void {
@@ -207,14 +217,16 @@ export function isLGTVWebSocketUrl(url: string): boolean {
 }
 
 /**
- * Checks whether native NSURLSessionWebSocketTask transport is available.
+ * Checks whether the platform-specific native LG transport is available.
  */
 export function isNativeWebSocketSupported(): boolean {
-  return Platform.OS === 'ios' && Boolean(NativeModules?.LGNativeWebSocketModule);
+  return Platform.OS === 'android'
+    ? Boolean(NativeModules?.LGAndroidWebSocketModule)
+    : Platform.OS === 'ios' && Boolean(NativeModules?.LGNativeWebSocketModule);
 }
 
 /**
- * Creates a WebSocketFactory with automatic native transport selection for iOS LG TV connections.
+ * Creates a WebSocketFactory with platform-specific native LG transport selection.
  */
 export function createWebSocketFactory(
   customNativeModule?: any,
@@ -224,11 +236,17 @@ export function createWebSocketFactory(
     const nativeModule =
       customNativeModule !== undefined
         ? customNativeModule
-        : Platform.OS === 'ios'
-          ? NativeModules?.LGNativeWebSocketModule
-          : null;
+        : Platform.OS === 'android'
+          ? NativeModules?.LGAndroidWebSocketModule
+          : Platform.OS === 'ios' ? NativeModules?.LGNativeWebSocketModule : null;
 
-    if (nativeModule && isLGTVWebSocketUrl(url)) {
+    const lgTarget = isLGTVWebSocketUrl(url) || (Platform.OS === 'android' &&
+      /^ws:\/\/(?:192\.168\.|10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/.test(url));
+    if (Platform.OS === 'android' && lgTarget) {
+      if (!url.startsWith('wss://')) throw new Error('Secure LG connection required: plaintext WebSocket fallback is disabled on Android');
+      if (!nativeModule) throw new Error('Secure LG Android transport is unavailable. Rebuild the Android app with LGAndroidWebSocketPackage.');
+    }
+    if (nativeModule && lgTarget) {
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.log(`[SmartRemote][Transport] Selected LGNativeWebSocketTransport for ${url}`);
       }

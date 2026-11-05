@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { DiscoveryManager } from '../application/services/DiscoveryManager';
 import { TVConnectionManager } from '../application/services/TVConnectionManager';
 import { Scheduler } from '../domain/interfaces/IScheduler';
@@ -11,6 +12,7 @@ import { ReconnectTVUseCase } from '../application/usecases/ReconnectTVUseCase';
 import { RestoreLastTVUseCase } from '../application/usecases/RestoreLastTVUseCase';
 import { SendRemoteCommandUseCase } from '../application/usecases/SendRemoteCommandUseCase';
 import { GetInstalledAppsUseCase } from '../application/usecases/GetInstalledAppsUseCase';
+import { HydrateDevicesUseCase } from '../application/usecases/HydrateDevicesUseCase';
 import { StartupRestorationUseCase } from '../application/usecases/StartupRestorationUseCase';
 import { WakeTVUseCase } from '../application/usecases/WakeTVUseCase';
 import { UpdateTVMacUseCase } from '../application/usecases/UpdateTVMacUseCase';
@@ -34,6 +36,7 @@ import { InMemoryCredentialStorage } from '../infrastructure/storage/InMemoryCre
 import { InMemoryKeyValueStorage } from '../infrastructure/storage/InMemoryKeyValueStorage';
 import { SecureCredentialStorage } from '../infrastructure/storage/SecureCredentialStorage';
 import { IMotionSensorService } from '../domain/interfaces/IMotionSensorService';
+import { AndroidMotionSensorService } from '../infrastructure/sensors/AndroidMotionSensorService';
 import { CoreMotionSensorService } from '../infrastructure/sensors/CoreMotionSensorService';
 import { AppStore, createAppStore } from '../store';
 import { bindConnectionToStore } from './bindConnectionToStore';
@@ -68,7 +71,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   const connectionManager = new TVConnectionManager(adapterFactory, {
     scheduler: overrides.scheduler,
   });
-  bindConnectionToStore(connectionManager, store.dispatch, deviceRepository);
+  bindConnectionToStore(connectionManager, store.dispatch, deviceRepository, store.getState);
 
   const manualStrategy = overrides.manualStrategy ?? new ManualIPDiscoveryStrategy();
   const discoveryService: ITVDiscoveryService =
@@ -77,16 +80,21 @@ export function createContainer(overrides: ContainerOverrides = {}) {
       strategies: [new LGWebOSSSDPDiscoveryStrategy(new NativeUdpSocketTransport())],
       manualStrategy,
     });
-  const motionSensorService: IMotionSensorService =
-    overrides.motionSensorService ?? new CoreMotionSensorService();
+  const motionSamplingOnAim = Platform.OS === 'android';
+  const motionSensorService: IMotionSensorService = overrides.motionSensorService ??
+    (motionSamplingOnAim ? new AndroidMotionSensorService() : new CoreMotionSensorService());
   const wakeService: ITVWakeService =
     overrides.wakeService ?? new WakeOnLanService();
 
-  const connectTV = new ConnectTVUseCase(connectionManager, deviceRepository);
+  const hydrateDevices = new HydrateDevicesUseCase(deviceRepository);
+  const connectTV = new ConnectTVUseCase(connectionManager, deviceRepository, Date.now, id => {
+    hydrateDevices.invalidate();
+    store.dispatch(tvActions.deviceSelected(id));
+  });
   const restoreLastTV = new RestoreLastTVUseCase(connectionManager, deviceRepository);
   const discoverTVs = new DiscoverTVsUseCase(discoveryService);
   const probeManualIP = new ProbeManualIPUseCase(manualStrategy);
-  const startupRestoration = new StartupRestorationUseCase(deviceRepository, restoreLastTV);
+  const startupRestoration = new StartupRestorationUseCase(hydrateDevices, restoreLastTV);
   const discoveryManager = new DiscoveryManager(discoverTVs, {
     onDiscoveryStarted: () => store.dispatch(tvActions.discoveryStarted()),
     onDeviceDiscovered: device => store.dispatch(tvActions.deviceDiscovered(device)),
@@ -95,7 +103,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   });
   const sendRemoteCommand = new SendRemoteCommandUseCase(connectionManager);
   const getInstalledApps = new GetInstalledAppsUseCase(connectionManager);
-  const forgetTV = new ForgetTVUseCase(deviceRepository, connectionManager, credentialStorage);
+  const forgetTV = new ForgetTVUseCase(deviceRepository, connectionManager, credentialStorage, () => hydrateDevices.invalidate());
   const wakeTV = new WakeTVUseCase(wakeService, connectionManager, overrides.scheduler);
   const updateTVMac = new UpdateTVMacUseCase(deviceRepository);
   const powerTV = new PowerTVUseCase(connectionManager, sendRemoteCommand, wakeTV);
@@ -108,17 +116,19 @@ export function createContainer(overrides: ContainerOverrides = {}) {
     discoveryService,
     discoveryManager,
     motionSensorService,
+    motionSamplingOnAim,
     credentialStorage,
     wakeService,
     useCases: {
       connectTV,
       pairTV: new PairTVUseCase(connectTV),
-      disconnectTV: new DisconnectTVUseCase(connectionManager),
+      disconnectTV: new DisconnectTVUseCase(connectionManager, () => hydrateDevices.invalidate()),
       reconnectTV: new ReconnectTVUseCase(connectionManager),
       restoreLastTV,
       sendRemoteCommand,
       discoverTVs,
       probeManualIP,
+      hydrateDevices,
       startupRestoration,
       getInstalledApps,
       forgetTV,

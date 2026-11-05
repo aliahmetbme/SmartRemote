@@ -41,4 +41,7 @@ export interface IMotionSensorService {
 
   /** Whether the sensor service is currently actively sampling. */
   isTracking(): boolean;
+
+  /** Native interruption such as Activity pause or a changed display frame. */
+  onInterrupted?(listener: () => void): () => void;
 }

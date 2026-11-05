@@ -1,3 +1,5 @@
+export { layoutTokens, getTabBarLayout, getPresentationLayout, getControlGeometry, getRemoteGeometry, getRemoteCardLayout, useRemoteDensity, remoteDensity, usePresentationLayout, platformPresentation } from './layout';
+
 export const theme = {
   colors: {
     background: '#0B0D11',
@@ -17,14 +19,28 @@ export const theme = {
     connected: '#00E676',
     connecting: '#FFB300',
     pairing: '#9C27B0',
+    pairingText: '#D4A1E5',
     disconnected: '#757575',
     error: '#FF5252',
 
     // Typography
     textPrimary: '#FFFFFF',
     textSecondary: '#A2A9B8',
-    textMuted: '#70788C',
+    textMuted: '#8993A6',
     textDisabled: '#8A92A3',
+
+    // Remote surfaces and label hierarchy
+    remoteCard: '#141821',
+    remoteCardEdge: '#1D2330',
+    modeTrack: '#131722',
+    modeTrackEdge: '#1D2433',
+    modeSelected: '#242D40',
+    modeUnavailable: '#697488',
+    controlLabel: '#C8D0DF',
+    controlActionLabel: '#DCE2EE',
+    controlDigit: '#E5EAF3',
+    controlSectionLabel: '#A7B5CC',
+    controlMute: '#E9947D',
 
     // D-Pad / Remote Controls
     buttonActive: '#2B3344',
@@ -34,6 +50,7 @@ export const theme = {
     dpadBackground: '#13171F',
     dpadButton: '#1E2430',
   },
+  remoteDisabledOpacity: 0.55,
   spacing: {
     xs: 4,
     sm: 8,
@@ -51,17 +68,17 @@ export const theme = {
   },
   typography: {
     title: {
-      fontSize: 22,
+      fontSize: 20,
       fontWeight: '700' as const,
       letterSpacing: 0.3,
     },
     subtitle: {
-      fontSize: 16,
+      fontSize: 15,
       fontWeight: '600' as const,
       letterSpacing: 0.2,
     },
     body: {
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '400' as const,
     },
     caption: {
