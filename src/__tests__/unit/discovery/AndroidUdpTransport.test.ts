@@ -30,7 +30,9 @@ describe('Android native UDP discovery boundary', () => {
     const received = jest.fn(); const failed = jest.fn();
     transport.onMessage(received); transport.onError(failed);
     expect(await transport.bind()).toBe(49152);
-    events.onUdpMessage({ data: 'SSDP', address: '192.168.1.10', port: 1900 });
+    events.onUdpMessage({ data: 'Stale', address: '192.168.1.10', port: 1900, localPort: 49151 });
+    expect(received).not.toHaveBeenCalled();
+    events.onUdpMessage({ data: 'SSDP', address: '192.168.1.10', port: 1900, localPort: 49152 });
     expect(received).toHaveBeenCalledWith('SSDP', expect.objectContaining({ address: '192.168.1.10' }));
     events.onUdpError({ error: 'Wi-Fi disconnected' });
     expect(failed).toHaveBeenCalledWith(expect.objectContaining({ code: 'network_unavailable' }));
@@ -38,10 +40,10 @@ describe('Android native UDP discovery boundary', () => {
     expect(remove).toHaveBeenCalledTimes(2); expect(native.close).toHaveBeenCalledTimes(1);
     await expect(transport.send('query', 1900, '239.255.255.250')).rejects.toThrow('before binding');
   });
-  it('cleans up listeners and gives actionable Wi-Fi guidance when binding fails', async () => {
-    native.bind.mockRejectedValue(new Error('network permission denied'));
+  it('cleans up listeners and preserves the native permission error category', async () => {
+    native.bind.mockRejectedValue(Object.assign(new Error('Local network access denied'), { code: 'PERMISSION_DENIED' }));
     const transport = new NativeUdpSocketTransport();
-    await expect(transport.bind()).rejects.toMatchObject({ code: 'network_unavailable', message: expect.stringContaining('Settings') });
+    await expect(transport.bind()).rejects.toMatchObject({ code: 'permission_denied', message: 'Local network access denied' });
     expect(remove).toHaveBeenCalledTimes(2);
   });
 });

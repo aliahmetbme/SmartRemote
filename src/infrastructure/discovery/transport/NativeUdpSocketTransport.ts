@@ -24,6 +24,7 @@ interface IUdpSocketNativeModule {
   bind(port: number): Promise<number>;
   send(message: string, port: number, address: string): Promise<void>;
   close(): Promise<void>;
+  fetchDescription?(url: string, source: string, timeoutMs: number): Promise<string>;
 }
 
 /**
@@ -55,8 +56,7 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
       return typeof this.driver.createSocket === 'function';
     }
 
-    // On iOS, receiving UDP multicast requires com.apple.developer.networking.multicast
-    // Without this entitlement, iOS drops packets or errors. Manual IP is the reliable path.
+    // The current iOS module is a stub, and signed multicast capability is not configured.
     if (Platform.OS === 'ios') {
       return false;
     }
@@ -87,9 +87,13 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
 
     try {
       const emitter = new NativeEventEmitter(NativeModules.UdpSocketModule);
+      let currentPort: number | undefined;
       this.nativeSubscription = emitter.addListener(
         'onUdpMessage',
-        (event: any) => {
+        (...args: unknown[]) => {
+          const event = args[0] as { data: string; address: string; port: number; localPort?: number } | undefined;
+          if (!event || typeof event.data !== 'string' || typeof event.address !== 'string') return;
+          if (event.localPort !== undefined && event.localPort !== currentPort) return;
           const rinfo: UdpRemoteInfo = {
             address: event.address,
             family: 'IPv4',
@@ -106,13 +110,15 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
         },
       );
 
-      this.errorSubscription = emitter.addListener('onUdpError', (event: { error?: string }) => {
+      this.errorSubscription = emitter.addListener('onUdpError', (event: { error?: string; localPort?: number }) => {
+        if (event.localPort !== undefined && event.localPort !== currentPort) return;
         const error = new TVDiscoveryError(
           event.error ?? "TV discovery interrupted. Check Wi-Fi and local network access in app Settings.", 'network_unavailable',
         );
         this.errorListeners.forEach(listener => listener(error));
       });
       const boundPort = await nativeModule.bind(port);
+      currentPort = boundPort;
       this.isBound = true;
       return boundPort;
     } catch (error) {
@@ -120,9 +126,12 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
       this.nativeSubscription = null;
       this.errorSubscription?.remove();
       this.errorSubscription = null;
+      const code = (error as { code?: string } | null)?.code;
       throw new TVDiscoveryError(
-        `Could not start TV discovery. Connect to the TV's Wi-Fi network and check local network access in app Settings. ${error instanceof Error ? error.message : ''}`,
-        'network_unavailable', error,
+        code === 'UDP_INTERNAL_ERROR' ? 'The native discovery socket could not start.' :
+          error instanceof Error ? error.message : 'Could not open the discovery socket',
+        code === 'PERMISSION_DENIED' ? 'permission_denied' :
+          code === 'UDP_INTERNAL_ERROR' ? 'native_failure' : 'network_unavailable', error,
       );
     }
   }
@@ -134,7 +143,9 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
         this.socket = socket;
 
         socket.on('error', (err: Error) => {
-          reject(new TVDiscoveryError('UDP socket error during bind', 'network_unavailable', err));
+          const error = new TVDiscoveryError('UDP socket error', 'network_unavailable', err);
+          if (this.isBound) this.errorListeners.forEach(listener => listener(error));
+          else reject(error);
         });
 
         socket.on('message', (msg: Uint8Array | string, rinfo: UdpRemoteInfo) => {
@@ -187,13 +198,18 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
     }
 
     const nativeModule = this.getNativeModule();
-    if (nativeModule) {
-      try {
-        await nativeModule.send(message, port, address);
-      } catch (err) {
-        throw new TVDiscoveryError(`Failed to send UDP datagram to ${address}:${port}`, 'network_unavailable', err);
-      }
+    if (!nativeModule) throw new TVDiscoveryError('UDP transport disconnected', 'unsupported_transport');
+    try {
+      await nativeModule.send(message, port, address);
+    } catch (err) {
+      throw new TVDiscoveryError(`Failed to send UDP datagram to ${address}:${port}`,
+        (err as { code?: string } | null)?.code === 'PERMISSION_DENIED' ? 'permission_denied' : 'network_unavailable', err);
     }
+  }
+
+  fetchDescription(url: string, timeoutMs: number, source: string): Promise<string> {
+    const native = this.getNativeModule();
+    return native?.fetchDescription?.(url, source, timeoutMs) ?? Promise.resolve('');
   }
 
   onMessage(listener: UdpMessageListener): () => void {
@@ -229,7 +245,7 @@ export class NativeUdpSocketTransport implements IUdpSocketTransport {
       });
     }
 
-    const nativeModule = this.getNativeModule();
+    const nativeModule = this.driver ? null : this.getNativeModule();
     if (nativeModule) {
       try {
         await nativeModule.close();

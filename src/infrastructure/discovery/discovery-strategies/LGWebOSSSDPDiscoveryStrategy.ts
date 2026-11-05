@@ -21,24 +21,7 @@ import { parseUPnPDeviceXml } from '../ssdp/UPnPDeviceDescriptionParser';
 import { IUdpSocketTransport } from '../transport/IUdpSocketTransport';
 import { IDiscoveryStrategy } from './IDiscoveryStrategy';
 
-export type XmlFetcher = (url: string, timeoutMs: number) => Promise<string>;
-
-const defaultXmlFetcher: XmlFetcher = async (url: string, timeoutMs: number): Promise<string> => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { Accept: 'text/xml, application/xml' },
-    });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    return await res.text();
-  } finally {
-    clearTimeout(timer);
-  }
-};
+export type XmlFetcher = (url: string, timeoutMs: number, sourceAddress: string) => Promise<string>;
 
 const defaultScheduler: Scheduler = {
   setTimeout: (fn, ms) => setTimeout(fn, ms),
@@ -58,7 +41,7 @@ export interface LGWebOSSSDPStrategyOptions {
 export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
   readonly id = 'lg-webos-ssdp';
   private readonly scheduler: Scheduler;
-  private readonly xmlFetcher: XmlFetcher;
+  private readonly xmlFetcher?: XmlFetcher;
   private readonly defaultTimeoutMs: number;
   private scanCompletion: Promise<void> | null = null;
 
@@ -67,7 +50,7 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
     options: LGWebOSSSDPStrategyOptions = {},
   ) {
     this.scheduler = options.scheduler ?? defaultScheduler;
-    this.xmlFetcher = options.xmlFetcher ?? defaultXmlFetcher;
+    this.xmlFetcher = options.xmlFetcher;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 4000;
   }
 
@@ -100,137 +83,131 @@ export class LGWebOSSSDPDiscoveryStrategy implements IDiscoveryStrategy {
 
     const timeoutMs = options.timeoutMs ?? this.defaultTimeoutMs;
     const discovered = new Map<string, TVDevice>();
-    const pendingIds = new Set<string>();
-
+    const emitted = new Set<string>();
+    const xmlFetcher = this.xmlFetcher;
+    const counters = { sent: 0, received: 0, parsed: 0, recognized: 0, emitted: 0,
+      malformed: 0, unrelated: 0, invalidOrigin: 0, unsafeLocation: 0, duplicate: 0,
+      uuidIdentity: 0, addressIdentity: 0, xmlStarted: 0, xmlCompleted: 0, xmlFailed: 0 };
+    const start = Date.now();
+    let outcome = 'bind-failed';
+    let boundPort: number | undefined;
     let active = true;
-    let removeAbortListener: (() => void) | undefined;
-    let cleanupError: (() => void) | undefined;
-    let cleanupListener: (() => void) | null = null;
-    let timer: unknown = null;
+    let cleanup: (() => void) | undefined;
+    let timer: unknown;
 
-    try {
-      await this.transport.bind(0);
-
-      const discoveryPromise = new Promise<TVDevice[]>((resolve, reject) => {
-        if (options.signal?.aborted) {
-          return resolve([]);
-        }
-
-        const onAbort = () => {
-          this.scheduler.clearTimeout(timer);
-          resolve(Array.from(discovered.values()));
-        };
-
-        options.signal?.addEventListener('abort', onAbort, { once: true });
-        removeAbortListener = () => options.signal?.removeEventListener('abort', onAbort);
-
-        timer = this.scheduler.setTimeout(() => {
-          options.signal?.removeEventListener('abort', onAbort);
-          resolve(Array.from(discovered.values()));
-        }, timeoutMs);
-
-        cleanupError = this.transport.onError?.(error => reject(error));
-        cleanupListener = this.transport.onMessage((msg, rinfo) => {
-          this.handleIncomingDatagram(
-            msg,
-            rinfo.address,
-            discovered,
-            pendingIds,
-            options.onDeviceFound,
-            () => active,
-          ).catch(() => {
-            // Ignore individual packet handling errors
-          });
-        });
-
-        const packet = createMSearchPacket(LG_WEBOS_SSDP_ST, 3);
-        this.transport.send(packet, SSDP_MULTICAST_PORT, SSDP_MULTICAST_ADDRESS).catch(err => {
-          this.scheduler.clearTimeout(timer);
-          options.signal?.removeEventListener('abort', onAbort);
-          reject(new TVDiscoveryError('Failed to broadcast SSDP discovery query', 'network_unavailable', err));
-        });
-      });
-
-      return await discoveryPromise;
-    } finally {
-      active = false;
-      removeAbortListener?.();
-      cleanupError?.();
-      if (typeof cleanupListener === 'function') {
-        (cleanupListener as () => void)();
-      }
-      this.scheduler.clearTimeout(timer);
-      await this.transport.close().catch(() => undefined);
-    }
-  }
-
-  private async handleIncomingDatagram(
-    msg: string,
-    remoteAddress: string,
-    discovered: Map<string, TVDevice>,
-    pendingIds: Set<string>,
-    onDeviceFound?: (device: TVDevice) => void,
-    isActive: () => boolean = () => true,
-  ): Promise<void> {
-    const packet = parseSSDPResponse(msg);
-    if (!packet) {
-      return;
-    }
-
-    const st = packet.headers.st;
-    if (!st || !st.toLowerCase().includes('webos-second-screen')) {
-      return;
-    }
-
-    const location = packet.headers.location;
-    const locationHost = extractHostFromLocation(location);
-    const ipAddress = locationHost?.host ?? remoteAddress;
-
-    if (!isLocalIPv4Address(ipAddress)) {
-      return;
-    }
-
-    const uuid = extractUUIDFromUSN(packet.headers.usn);
-    const deviceId = uuid ? `lg-${uuid}` : `lg-webos-${ipAddress}`;
-
-    if (discovered.has(deviceId) || pendingIds.has(deviceId)) {
-      return;
-    }
-    pendingIds.add(deviceId);
-
-    let friendlyName = `LG webOS TV (${ipAddress})`;
-    let modelName: string | undefined;
-
-    if (location && isLocalIPv4Address(locationHost?.host ?? '')) {
-      try {
-        const xml = await this.xmlFetcher(location, 1500);
-        const info = parseUPnPDeviceXml(xml);
-        if (info.friendlyName) {
-          friendlyName = info.friendlyName;
-        }
-        if (info.modelName || info.modelNumber) {
-          modelName = info.modelName ?? info.modelNumber;
-        }
-      } catch {
-        // Fall back to default name if UPnP description XML fails to load
-      }
-    }
-
-    if (!isActive()) return;
-
-    const device: TVDevice = {
-      id: deviceId,
-      name: friendlyName,
-      brand: TVBrand.LG,
-      model: modelName,
-      ipAddress,
-      platform: TVPlatform.WebOS,
-      protocol: TVProtocol.LGWebOSSSAP,
-      capabilities: UNKNOWN_CAPABILITIES,
-      pairingStatus: PairingStatus.Unpaired,
+    const emit = (device: TVDevice) => {
+      if (options.signal?.aborted || emitted.has(device.id)) return;
+      emitted.add(device.id);
+      counters.emitted++;
+      try { options.onDeviceFound?.(device); } catch { /* A listener cannot prevent scan cleanup. */ }
     };
 
-    discovered.set(deviceId, device);
-    onDeviceFound?.(device);
+    try {
+      boundPort = await this.transport.bind(0);
+      if (options.signal?.aborted) {
+        outcome = 'cancelled';
+        return [];
+      }
+      return await new Promise<TVDevice[]>((resolve, reject) => {
+        const finish = (reason: string, error?: Error) => {
+          if (!active) return;
+          active = false;
+          outcome = reason;
+          if (error) {
+            reject(error);
+            return;
+          }
+          if (reason !== 'cancelled') discovered.forEach(emit);
+          resolve([...discovered.values()].filter(device => emitted.has(device.id)));
+        };
+        const abort = () => finish('cancelled');
+        options.signal?.addEventListener('abort', abort, { once: true });
+        timer = this.scheduler.setTimeout(() => finish('completed'), timeoutMs);
+        const removeError = this.transport.onError?.(error => finish('receive-failed', error));
+        const removeMessage = this.transport.onMessage((msg, rinfo) => {
+          if (!active) return;
+          counters.received++;
+          const packet = parseSSDPResponse(msg);
+          if (!packet) { counters.malformed++; return; }
+          counters.parsed++;
+          if (packet.headers.st?.toLowerCase() !== LG_WEBOS_SSDP_ST) {
+            counters.unrelated++;
+            return;
+          }
+
+          const ipAddress = rinfo.address;
+          if (!isLocalIPv4Address(ipAddress) || ipAddress.startsWith('127.')) {
+            counters.invalidOrigin++;
+            return;
+          }
+
+          const uuid = extractUUIDFromUSN(packet.headers.usn);
+          const deviceId = uuid ? `lg-${uuid}` : `lg-webos-${ipAddress}`;
+          if (discovered.has(deviceId)) { counters.duplicate++; return; }
+
+          counters.recognized++;
+          if (uuid) counters.uuidIdentity++; else counters.addressIdentity++;
+          const device: TVDevice = {
+            id: deviceId,
+            name: `LG webOS TV (${ipAddress})`,
+            ipAddress,
+            brand: TVBrand.LG,
+            platform: TVPlatform.WebOS,
+            protocol: TVProtocol.LGWebOSSSAP,
+            capabilities: UNKNOWN_CAPABILITIES,
+            pairingStatus: PairingStatus.Unpaired,
+          };
+          // Recognition is synchronous. Optional metadata cannot remove a recognized TV.
+          discovered.set(deviceId, device);
+          const location = packet.headers.location;
+          if (!location || extractHostFromLocation(location)?.host !== ipAddress) {
+            if (location) counters.unsafeLocation++;
+            emit(device);
+            return;
+          }
+          if (!xmlFetcher || counters.xmlStarted >= 4) { emit(device); return; }
+          counters.xmlStarted++;
+          (async () => {
+            let result = device;
+            try {
+              const xml = await xmlFetcher(location, Math.min(1500, timeoutMs), ipAddress);
+              if (!active) return;
+              const info = parseUPnPDeviceXml(xml);
+              result = { ...device, name: info.friendlyName ?? device.name,
+                model: info.modelName ?? info.modelNumber };
+              counters.xmlCompleted++;
+            } catch {
+              if (!active) return;
+              counters.xmlFailed++;
+            }
+            discovered.set(deviceId, result);
+            emit(result);
+          })().catch(() => undefined);
+        });
+        cleanup = () => {
+          options.signal?.removeEventListener('abort', abort);
+          removeError?.();
+          removeMessage();
+        };
+
+        this.transport.send(createMSearchPacket(), SSDP_MULTICAST_PORT, SSDP_MULTICAST_ADDRESS)
+          .then(() => { if (active) counters.sent++; })
+          .catch(error => finish('send-failed', new TVDiscoveryError(
+            'Failed to broadcast SSDP discovery query',
+            error instanceof TVDiscoveryError ? error.code : 'network_unavailable', error,
+          )));
+      });
+    } finally {
+      active = false;
+      cleanup?.();
+      this.scheduler.clearTimeout(timer);
+      await this.transport.close().catch(() => undefined);
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.debug('[SmartRemote][SSDP]', {
+          outcome, boundPort, destination: `${SSDP_MULTICAST_ADDRESS}:${SSDP_MULTICAST_PORT}`,
+          durationMs: Date.now() - start, cleanup: 'finished', ...counters,
+        });
+      }
+    }
   }
 }

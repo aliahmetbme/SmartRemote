@@ -187,6 +187,65 @@ describe('LGWebOSSSDPDiscoveryStrategy', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('returns the recognized TV at the deadline even when XML is still pending', async () => {
+    const transport = new FakeUdpSocketTransport();
+    let completeXml!: (xml: string) => void;
+    const strategy = new LGWebOSSSDPDiscoveryStrategy(transport, {
+      defaultTimeoutMs: 100,
+      xmlFetcher: () => new Promise(resolve => { completeXml = resolve; }),
+    });
+    const found = jest.fn();
+    const scan = strategy.discover({ onDeviceFound: found });
+    await Promise.resolve();
+    jest.advanceTimersByTime(99);
+    transport.simulateIncoming(validResponse, { address: '192.168.1.100', port: 1900 });
+    jest.advanceTimersByTime(1);
+    const devices = await scan;
+    expect(devices).toEqual([expect.objectContaining({ name: 'LG webOS TV (192.168.1.100)' })]);
+    expect(found).toHaveBeenCalledTimes(1);
+    completeXml('<device><friendlyName>Late TV</friendlyName></device>');
+    await Promise.resolve();
+    expect(found).toHaveBeenCalledTimes(1);
+    expect(transport.closed).toBe(true);
+  });
+
+  it('recognizes distinct local senders without fetching unrelated or unsafe locations', async () => {
+    const transport = new FakeUdpSocketTransport();
+    const xmlFetcher = jest.fn().mockResolvedValue('');
+    const strategy = new LGWebOSSSDPDiscoveryStrategy(transport, { xmlFetcher, defaultTimeoutMs: 100 });
+    const scan = strategy.discover();
+    await Promise.resolve();
+    transport.simulateIncoming(validResponse, { address: '192.168.1.101', port: 1900 });
+    transport.simulateIncoming(validResponse, { address: '8.8.8.8', port: 1900 });
+    transport.simulateIncoming('HTTP/1.1 200 OK\r\nsT: URN:LGE-COM:SERVICE:WEBOS-SECOND-SCREEN:1\r\n\r\n',
+      { address: '192.168.1.102', port: 1900 });
+    jest.advanceTimersByTime(100);
+    expect((await scan).map(device => device.ipAddress)).toEqual(['192.168.1.101', '192.168.1.102']);
+    expect(xmlFetcher).not.toHaveBeenCalled();
+  });
+
+  it.each(['bindError', 'sendError'] as const)('closes the transport after %s', async key => {
+    const transport = new FakeUdpSocketTransport({ [key]: new Error('socket failure') });
+    await expect(new LGWebOSSSDPDiscoveryStrategy(transport).discover()).rejects.toThrow();
+    expect(transport.closed).toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('rejects a receive failure and cleans up the scan', async () => {
+    let fail!: (error: Error) => void;
+    const remove = jest.fn();
+    const transport = Object.assign(new FakeUdpSocketTransport(), {
+      onError(listener: (error: Error) => void) { fail = listener; return remove; },
+    });
+    const scan = new LGWebOSSSDPDiscoveryStrategy(transport).discover();
+    await Promise.resolve();
+    fail(new TVDiscoveryError('Receive failed', 'network_unavailable'));
+    await expect(scan).rejects.toMatchObject({ code: 'network_unavailable' });
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(transport.closed).toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('serializes replacement scans so old cleanup cannot close the new UDP session', async () => {
     const transport = new FakeUdpSocketTransport();
     const close = jest.spyOn(transport, 'close');

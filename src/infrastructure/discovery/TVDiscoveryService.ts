@@ -22,12 +22,16 @@ export class TVDiscoveryService implements ITVDiscoveryService {
     this.manualStrategy = options.manualStrategy ?? new ManualIPDiscoveryStrategy();
   }
 
+  isAutomaticDiscoveryAvailable(): boolean {
+    return this.strategies.some(strategy => strategy.isAvailable());
+  }
+
   async discover(options: DiscoveryOptions = {}): Promise<TVDevice[]> {
     const availableStrategies = this.strategies.filter(s => s.isAvailable());
 
     if (this.strategies.length > 0 && availableStrategies.length === 0) {
       throw new TVDiscoveryError(
-        'Automatic SSDP discovery is unavailable on this device because UDP multicast transport is not supported without Apple multicast entitlements. Please connect using your TV IP address below.',
+        'Automatic SSDP discovery is unavailable in this app runtime. Connect using the TV IP address.',
         'unsupported_transport',
       );
     }

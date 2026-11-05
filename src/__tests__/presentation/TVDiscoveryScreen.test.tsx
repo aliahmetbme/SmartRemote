@@ -45,7 +45,7 @@ describe('TVDiscoveryScreen Component', () => {
     }
   });
 
-  const createTestEnv = () => {
+  const createTestEnv = (automaticAvailable = true) => {
     const mockAdapter = new MockTVAdapter();
     const container = createContainer({
       adapterFactory: {
@@ -53,6 +53,9 @@ describe('TVDiscoveryScreen Component', () => {
         supports: () => true,
       },
     });
+
+    jest.spyOn(container.discoveryService, 'isAutomaticDiscoveryAvailable')
+      .mockReturnValue(automaticAvailable);
 
     let currentRenderer: ReactTestRenderer.ReactTestRenderer | null = null;
     const render = () => {
@@ -94,6 +97,15 @@ describe('TVDiscoveryScreen Component', () => {
 
     const scanBtn = renderer!.root.findByProps({ testID: 'scan-button' });
     expect(scanBtn).toBeDefined();
+  });
+
+  it('keeps manual IP visible when automatic discovery is unavailable', async () => {
+    const { render } = createTestEnv(false);
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => { renderer = render(); });
+    expect(renderer.root.findAllByProps({ testID: 'scan-button' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'automatic-discovery-unavailable' })).toBeDefined();
+    expect(renderer.root.findByProps({ testID: 'manual-ip-input' })).toBeDefined();
   });
 
   it('triggers scan on Scan button press', async () => {

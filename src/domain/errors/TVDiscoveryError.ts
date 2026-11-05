@@ -1,6 +1,7 @@
 export type TVDiscoveryErrorCode =
   | 'permission_denied'
   | 'network_unavailable'
+  | 'native_failure'
   | 'timeout'
   | 'cancelled'
   | 'invalid_response'

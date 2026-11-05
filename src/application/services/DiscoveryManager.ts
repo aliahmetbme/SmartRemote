@@ -54,19 +54,23 @@ export class DiscoveryManager {
     this.abortController = controller;
     this.isScanning = true;
     this.emitStarted();
+    const emitted = new Set<string>();
 
     try {
       const devices = await this.discoverTVs.execute({
         timeoutMs: options.timeoutMs,
         signal: controller.signal,
         onDeviceFound: device => {
-          if (this.abortController === controller) this.emitDeviceDiscovered(device);
+          if (this.abortController === controller && !emitted.has(device.id)) {
+            emitted.add(device.id);
+            this.emitDeviceDiscovered(device);
+          }
         },
       });
 
       if (this.abortController !== controller) return devices;
       for (const device of devices) {
-        this.emitDeviceDiscovered(device);
+        if (!emitted.has(device.id)) this.emitDeviceDiscovered(device);
       }
 
       this.isScanning = false;

@@ -92,10 +92,12 @@ export const TVDiscoveryScreen: React.FC = () => {
   }, [container.discoveryManager]);
 
   const isScanning = discoveryStatus === 'scanning';
+  const canScan = container.discoveryService.isAutomaticDiscoveryAvailable?.() ?? true;
   const isConnecting = connectionStatus === TVConnectionState.Connecting;
   const isPairing = connectionStatus === TVConnectionState.Pairing;
 
   const handleScanToggle = () => {
+    if (!canScan) return;
     if (isScanning) {
       container.discoveryManager.cancelDiscovery();
     } else {
@@ -298,11 +300,11 @@ export const TVDiscoveryScreen: React.FC = () => {
       {/* Header Actions */}
       <View style={[styles.header, layout.headerStacked && styles.stacked]}>
         <Text style={styles.headerTitle}>TV Discovery</Text>
-        <TouchableOpacity
+        {canScan && <TouchableOpacity
           style={[styles.scanButton, isScanning && styles.scanningButton]}
           onPress={handleScanToggle}
           testID="scan-button"
-          accessibilityLabel={isScanning ? 'Scanning for TVs' : 'Scan for nearby TVs'}
+          accessibilityLabel={isScanning ? 'Cancel TV scan' : 'Scan for nearby TVs'}
           accessibilityRole="button"
         >
           {isScanning ? (
@@ -313,15 +315,17 @@ export const TVDiscoveryScreen: React.FC = () => {
           ) : (
             <Text style={styles.scanButtonText}>Scan for TVs</Text>
           )}
-        </TouchableOpacity>
+        </TouchableOpacity>}
       </View>
 
-      {/* iOS Multicast Notice */}
-      {Platform.OS === 'ios' && (
-        <View style={styles.iosNoticeCard} testID="ios-multicast-notice">
-          <Text style={styles.iosNoticeTitle}>iOS Network Discovery</Text>
+      {/* Automatic discovery capability */}
+      {!canScan && (
+        <View style={styles.iosNoticeCard} testID="automatic-discovery-unavailable">
+          <Text style={styles.iosNoticeTitle}>Automatic Discovery Unavailable</Text>
           <Text style={styles.iosNoticeBody}>
-            Automatic SSDP multicast on iOS requires Apple's restricted multicast entitlement. If your TV is not detected automatically, enter its IP address below.
+            {Platform.OS === 'ios'
+              ? 'This iOS build does not support SSDP multicast. Enter your TV IP address below.'
+              : 'UDP discovery is unavailable in this Android build. Enter your TV IP address below.'}
           </Text>
         </View>
       )}
@@ -386,6 +390,8 @@ export const TVDiscoveryScreen: React.FC = () => {
                 ? 'Automatic Discovery Unavailable'
                 : discoveryError.code === 'permission_denied'
                 ? 'Local Network Access Required'
+                : discoveryError.code === 'native_failure'
+                ? 'Could Not Start Discovery'
                 : 'Discovery Error'}
             </Text>
             <TouchableOpacity
@@ -404,9 +410,14 @@ export const TVDiscoveryScreen: React.FC = () => {
               💡 Use the "Connect via IP Address" form above to pair with your LG webOS TV directly.
             </Text>
           )}
+          {discoveryError.code === 'network_unavailable' && (
+            <Text style={styles.discoveryErrorHint}>Connect to the same Wi-Fi network as your TV, then retry or enter its IP address.</Text>
+          )}
           {discoveryError.code === 'permission_denied' && (
             <Text style={styles.discoveryErrorHint}>
-              💡 Open iOS Settings &gt; Privacy &amp; Security &gt; Local Network and enable SmartRemote.
+              {Platform.OS === 'ios'
+                ? 'Open iOS Settings → Privacy & Security → Local Network and enable SmartRemote.'
+                : 'Check SmartRemote’s local network access and Wi-Fi restrictions in Android Settings.'}
             </Text>
           )}
         </View>
@@ -431,14 +442,17 @@ export const TVDiscoveryScreen: React.FC = () => {
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer} testID="discovery-empty">
-            <Text style={styles.emptyTitle}>{isScanning ? 'Scanning your network' : 'No TVs found yet'}</Text>
+            <Text style={styles.emptyTitle}>{isScanning ? 'Scanning your network' : !canScan ? 'Use the TV IP address' :
+              discoveryStatus === 'completed' ? 'No TVs found' : 'No TVs found yet'}</Text>
             <Text style={styles.emptyText}>
               {isScanning
                 ? 'Searching local Wi-Fi network for LG Smart TVs...'
                 : discoveryStatus === 'failed'
                 ? 'Automatic SSDP discovery could not complete. Use the manual IP connection form above to connect directly.'
-                : Platform.OS === 'ios'
-                ? 'No TVs discovered via multicast. On iOS, automatic SSDP is restricted without Apple entitlements. Please connect using your TV IP address above.'
+                : !canScan
+                ? 'Use the manual IP connection form above.'
+                : discoveryStatus === 'completed'
+                ? 'The scan finished without a TV response. Retry or connect via IP address above.'
                 : 'No TVs discovered yet. Tap "Scan for TVs" or connect via IP address above.'}
             </Text>
           </View>

@@ -147,7 +147,7 @@ describe('Phase 7 — Architecture Refactoring & Code Quality', () => {
       const result = await manager.startDiscovery();
       expect(result).toHaveLength(1);
       expect(events).toEqual(['started', 'completed']);
-      expect(discoveredDevices).toHaveLength(2); // once from onDeviceFound, once from loop
+      expect(discoveredDevices).toEqual([result[0]]); // completion must not re-emit the live result
     });
 
     it('domain isLocalIPv4Address validates local private IPv4 and rejects public/invalid addresses', () => {

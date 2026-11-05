@@ -29,7 +29,7 @@ export function createMSearchPacket(target = LG_WEBOS_SSDP_ST, mx = 3): string {
 }
 
 /**
- * Parses raw SSDP HTTP response or NOTIFY datagram.
+ * Parses raw SSDP HTTP response.
  * Header names are normalized to lowercase.
  */
 export function parseSSDPResponse(raw: string): SSDPPacket | null {
@@ -43,8 +43,8 @@ export function parseSSDPResponse(raw: string): SSDPPacket | null {
   }
 
   const firstLine = lines[0].trim();
-  const statusMatch = /^HTTP\/\d\.\d\s+(\d{3})/i.exec(firstLine);
-  const status = statusMatch ? Number(statusMatch[1]) : (firstLine.startsWith('NOTIFY') ? 200 : 0);
+  const statusMatch = /^HTTP\/1\.[01]\s+(\d{3})(?:\s|$)/i.exec(firstLine);
+  const status = statusMatch ? Number(statusMatch[1]) : 0;
 
   if (status !== 200) {
     return null;
@@ -54,6 +54,7 @@ export function parseSSDPResponse(raw: string): SSDPPacket | null {
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
+    if (!line.trim()) break;
     const colonIndex = line.indexOf(':');
     if (colonIndex > 0) {
       const key = line.slice(0, colonIndex).trim().toLowerCase();
@@ -70,7 +71,7 @@ export function parseSSDPResponse(raw: string): SSDPPacket | null {
  */
 export function extractUUIDFromUSN(usn?: string): string | null {
   if (!usn) return null;
-  const match = /uuid:([A-Fa-f0-9-]+)/i.exec(usn);
+  const match = /^uuid:([a-f0-9][a-f0-9-]*)(?:::|$)/i.exec(usn);
   return match ? match[1].toLowerCase() : null;
 }
 
@@ -79,9 +80,10 @@ export function extractUUIDFromUSN(usn?: string): string | null {
  */
 export function extractHostFromLocation(location?: string): { host: string; port: number } | null {
   if (!location) return null;
-  const match = /^https?:\/\/([^/:]+)(?::(\d+))?/i.exec(location);
+  const match = /^(https?):\/\/([a-z0-9.-]+)(?::(\d{1,5}))?(?:[/?][^\s\\#]*)?$/i.exec(location);
   if (!match) return null;
-  const host = match[1];
-  const port = match[2] ? Number(match[2]) : 80;
+  const host = match[2];
+  const port = match[3] ? Number(match[3]) : match[1].toLowerCase() === 'https' ? 443 : 80;
+  if (port < 1 || port > 65535) return null;
   return { host, port };
 }

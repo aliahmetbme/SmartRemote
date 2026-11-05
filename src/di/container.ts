@@ -74,10 +74,13 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   bindConnectionToStore(connectionManager, store.dispatch, deviceRepository, store.getState);
 
   const manualStrategy = overrides.manualStrategy ?? new ManualIPDiscoveryStrategy();
+  const udpTransport = new NativeUdpSocketTransport();
   const discoveryService: ITVDiscoveryService =
     overrides.discoveryService ??
     new TVDiscoveryService({
-      strategies: [new LGWebOSSSDPDiscoveryStrategy(new NativeUdpSocketTransport())],
+      strategies: [new LGWebOSSSDPDiscoveryStrategy(udpTransport, {
+        xmlFetcher: (url, timeout, source) => udpTransport.fetchDescription(url, timeout, source),
+      })],
       manualStrategy,
     });
   const motionSamplingOnAim = Platform.OS === 'android';

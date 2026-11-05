@@ -9,6 +9,7 @@ export interface DiscoveryOptions {
 }
 
 export interface ITVDiscoveryService {
+  isAutomaticDiscoveryAvailable?(): boolean;
   /** Resolves with devices found when the scan ends (timeout, cancel, or completion). */
   discover(options?: DiscoveryOptions): Promise<TVDevice[]>;
 }
