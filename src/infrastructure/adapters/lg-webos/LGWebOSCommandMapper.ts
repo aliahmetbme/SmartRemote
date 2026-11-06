@@ -30,6 +30,8 @@ export const SSAP_URI = {
   setVolume: 'ssap://audio/setVolume',
   setMute: 'ssap://audio/setMute',
   audioStatus: 'ssap://audio/getStatus',
+  openChannel: 'ssap://tv/openChannel',
+  currentChannel: 'ssap://tv/getCurrentChannel',
   channelUp: 'ssap://tv/channelUp',
   channelDown: 'ssap://tv/channelDown',
   switchInput: 'ssap://tv/switchInput',

@@ -294,6 +294,150 @@ describe('LGWebOSAdapter commands', () => {
     expect(server.requests.find(r => r.uri.endsWith('setVolume'))?.payload).toEqual({ volume: 15 });
   });
 
+  it.each([
+    ['0023', 'confirmed'],
+    ['23-1', 'mismatch'],
+    [undefined, 'accepted-unverified'],
+  ] as const)('uses one direct request and bounded readback for %s', async (currentChannelNumber, outcome) => {
+    const { adapter, server } = setup({ currentChannelNumber });
+    await adapter.connect(device);
+    await expect(adapter.selectChannel('0023', () => true)).resolves.toBe(outcome);
+    expect(server.requests.filter(request => request.uri.includes('Channel'))).toEqual([
+      { uri: 'ssap://tv/openChannel', payload: { channelNumber: '0023' } },
+      { uri: 'ssap://tv/getCurrentChannel' },
+      ...(outcome === 'confirmed' ? [] : [{ uri: 'ssap://tv/getCurrentChannel' }]),
+    ]);
+    expect(server.pointerFrames).toEqual([]);
+    await adapter.disconnect();
+  });
+
+  it.each([
+    [{ unsupportedUris: ['ssap://tv/openChannel'] }, 'unsupported', 1],
+    [{ unauthorizedUris: ['ssap://tv/openChannel'] }, 'permission-denied', 1],
+    [{ unsupportedUris: ['ssap://tv/getCurrentChannel'] }, 'readback-unavailable', 2],
+  ] satisfies [FakeWebOSServerOptions, string, number][])('reports SSAP failure without falling back or resubmitting', async (options, outcome, count) => {
+    const { adapter, server } = setup(options);
+    await adapter.connect(device);
+    const before = server.requests.length;
+    await expect(adapter.selectChannel('23', () => true)).resolves.toBe(outcome);
+    expect(server.requests.slice(before)).toHaveLength(count);
+    expect(server.pointerFrames).toEqual([]);
+    await adapter.disconnect();
+  });
+
+  it('verifies a delayed update and normalizes main-channel zero padding', async () => {
+    jest.useFakeTimers();
+    try {
+      const { adapter, server } = setup({ currentChannelNumber: '7' });
+      await adapter.connect(device);
+      const selection = adapter.selectChannel('0023', () => true);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(server.requests.filter(request => request.uri === 'ssap://tv/getCurrentChannel')).toHaveLength(1);
+      server.options.currentChannelNumber = ' 23 ';
+      await jest.advanceTimersByTimeAsync(250);
+      await expect(selection).resolves.toBe('confirmed');
+      expect(server.requests.filter(request => request.uri === 'ssap://tv/openChannel')).toHaveLength(1);
+      await adapter.disconnect();
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('leaves timed-out readback unverified without resubmitting', async () => {
+    jest.useFakeTimers();
+    try {
+      const { adapter, server } = setup({ silentUris: ['ssap://tv/getCurrentChannel'] });
+      await adapter.connect(device);
+      const selection = adapter.selectChannel('23', () => true);
+      await jest.advanceTimersByTimeAsync(1250);
+      await expect(selection).resolves.toBe('accepted-unverified');
+      expect(server.requests.filter(request => request.uri === 'ssap://tv/openChannel')).toHaveLength(1);
+      expect(server.requests.filter(request => request.uri === 'ssap://tv/getCurrentChannel')).toHaveLength(2);
+      await adapter.disconnect();
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('waits for the previous write to settle across keypad remounts', async () => {
+    jest.useFakeTimers();
+    try {
+      const { adapter, server } = setup({ silentUris: ['ssap://tv/openChannel'], currentChannelNumber: '5' });
+      await adapter.connect(device);
+      const first = adapter.selectChannel('3', () => true);
+      const latest = adapter.selectChannel('5', () => true);
+      const writes = () => server.requests.filter(request => request.uri === 'ssap://tv/openChannel')
+        .map(request => request.payload?.channelNumber);
+      expect(writes()).toEqual(['3']);
+      server.options.silentUris = [];
+      await jest.advanceTimersByTimeAsync(2000);
+      await expect(first).resolves.toBe('transport-error');
+      await expect(latest).resolves.toBe('confirmed');
+      expect(writes()).toEqual(['3', '5']);
+      await adapter.disconnect();
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('does not send a second readback after disconnect', async () => {
+    jest.useFakeTimers();
+    try {
+      const { adapter, server } = setup({ currentChannelNumber: '7' });
+      await adapter.connect(device);
+      const selection = adapter.selectChannel('23', () => true).catch((error: unknown) => error);
+      await jest.advanceTimersByTimeAsync(0);
+      await adapter.disconnect();
+      await jest.advanceTimersByTimeAsync(250);
+      expect(await selection).toMatchObject({ code: 'cancelled' });
+      expect(server.requests.filter(request => request.uri === 'ssap://tv/getCurrentChannel')).toHaveLength(1);
+    } finally { jest.useRealTimers(); }
+  });
+
+  it('reports a transport timeout without sending another tuning request', async () => {
+    jest.useFakeTimers();
+    try {
+      const { adapter, server } = setup({ silentUris: ['ssap://tv/openChannel'] });
+      await adapter.connect(device);
+      const selection = adapter.selectChannel('23', () => true);
+      await jest.advanceTimersByTimeAsync(2000);
+      await expect(selection).resolves.toBe('transport-error');
+      expect(server.requests.filter(request => request.uri === 'ssap://tv/openChannel')).toHaveLength(1);
+      expect(server.pointerFrames).toEqual([]);
+      await adapter.disconnect();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('rejects a stale keypad target before issuing a tuning request', async () => {
+    const { adapter, server } = setup();
+    const manager = new TVConnectionManager({ create: () => adapter, supports: () => true });
+    await manager.connect(device);
+    await expect(new SendRemoteCommandUseCase(manager).selectChannel('23', 'previous-tv', () => true))
+      .rejects.toMatchObject({ code: 'cancelled' });
+    expect(server.requests.some(request => request.uri === 'ssap://tv/openChannel')).toBe(false);
+    await manager.disconnect();
+  });
+
+  it('skips channel readback if the selection becomes stale after sending', async () => {
+    const { adapter, server } = setup();
+    await adapter.connect(device);
+    let current = true;
+    const selection = adapter.selectChannel('23', () => current);
+    current = false;
+    await expect(selection).rejects.toMatchObject({ code: 'cancelled' });
+    expect(server.requests.filter(request => request.uri.includes('Channel'))).toEqual([
+      { uri: 'ssap://tv/openChannel', payload: { channelNumber: '23' } },
+    ]);
+    await adapter.disconnect();
+  });
+
+  it('rechecks channel input cancellation after obtaining the pointer socket', async () => {
+    const { adapter, server } = setup();
+    await adapter.connect(device);
+    let current = true;
+    const pending = adapter.sendKey(RemoteKey.Digit2, () => current);
+    current = false;
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    expect(server.pointerFrames).toEqual([]);
+    await adapter.disconnect();
+  });
+
   it('sends navigation through the pointer socket, not SSAP', async () => {
     const { adapter, server } = setup();
     await adapter.connect(device);

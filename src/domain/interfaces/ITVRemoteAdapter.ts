@@ -23,7 +23,7 @@ export interface ITVRemoteAdapter {
   getCapabilities(): TVCapabilities;
   onConnectionStateChange(listener: ConnectionStateListener): Unsubscribe;
 
-  sendKey(key: RemoteKey): Promise<void>;
+  sendKey(key: RemoteKey, isCurrent?: () => boolean): Promise<void>;
   volumeUp(): Promise<void>;
   volumeDown(): Promise<void>;
   mute(): Promise<void>;

@@ -17,7 +17,9 @@ export interface FakeWebOSServerOptions {
   unauthorizedUris?: string[];
   /** Ignore all messages (simulates an unresponsive TV). */
   silent?: boolean;
+  silentUris?: string[];
   muted?: boolean;
+  currentChannelNumber?: string;
 }
 
 export const POINTER_PATH = 'ws://192.168.0.20:3000/resources/abc/netinput_pointer.sock';
@@ -138,7 +140,9 @@ export class FakeWebOSServer {
       return;
     }
     this.requests.push({ uri: message.uri ?? '', payload: message.payload });
-    Promise.resolve().then(() => this.respond(socket, message));
+    if (!this.options.silentUris?.includes(message.uri ?? '')) {
+      Promise.resolve().then(() => this.respond(socket, message));
+    }
   }
 
   private handleRegister(
@@ -190,6 +194,9 @@ export class FakeWebOSServer {
     if (this.options.unsupportedUris?.includes(uri)) return notFound();
 
     switch (uri) {
+      case 'ssap://tv/getCurrentChannel':
+        ok({ channelNumber: this.options.currentChannelNumber });
+        return;
       case 'ssap://api/getServiceList': {
         const services = this.options.services === undefined
           ? ['audio', 'tv', 'system', 'system.launcher', 'com.webos.service.ime']

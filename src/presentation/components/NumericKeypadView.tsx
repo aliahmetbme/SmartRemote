@@ -1,3 +1,4 @@
+import type { ChannelEntryStatus } from '../hooks/useNumericKeypadBuffer';
 import React from 'react';
 import {
   View,
@@ -9,8 +10,24 @@ import {
 } from 'react-native';
 import { theme, usePresentationLayout, useRemoteDensity, layoutTokens } from '../theme';
 
+const channelStatusLabels = {
+  interrupted: 'INTERRUPTED',
+  confirmed: 'CHANNEL VERIFIED',
+  'accepted-unverified': 'UNVERIFIED',
+  'readback-unavailable': 'READBACK UNAVAILABLE',
+  mismatch: 'CHANNEL MISMATCH',
+  unsupported: 'TUNING UNSUPPORTED',
+  'permission-denied': 'TUNING DENIED',
+  'source-unavailable': 'SOURCE UNAVAILABLE',
+  'channel-unavailable': 'CHANNEL UNAVAILABLE',
+  rejected: 'TUNING REJECTED',
+  'transport-error': 'CONNECTION ERROR',
+} as const;
+
 export interface NumericKeypadViewProps {
   channelBuffer: string;
+  status?: ChannelEntryStatus;
+  busy?: boolean;
   isAvailable?: boolean;
   isConnected?: boolean;
   onDigitPress: (digit: number) => void;
@@ -25,6 +42,8 @@ export interface NumericKeypadViewProps {
  */
 export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
   channelBuffer,
+  status = 'editing',
+  busy = false,
   isAvailable = true,
   isConnected = true,
   onDigitPress,
@@ -41,12 +60,14 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
     paddingHorizontal: density.keyHorizontalPadding,
   }];
   const rowStyle = [styles.row, density && [styles.compactSpacing, { gap: density.keyGap }]];
+  const enabled = isAvailable && isConnected;
+  const canEdit = enabled;
   const renderDigitButton = (digit: number) => (
     <TouchableOpacity
       key={digit}
-      style={[keyStyle, !isAvailable && styles.keyDisabled]}
-      accessibilityState={{ disabled: !isAvailable }}
-      disabled={!isAvailable}
+      style={[keyStyle, !canEdit && styles.keyDisabled]}
+      accessibilityState={{ disabled: !canEdit }}
+      disabled={!canEdit}
       activeOpacity={0.65}
       onPress={() => onDigitPress(digit)}
       testID={`btn-digit-${digit}`}
@@ -61,7 +82,11 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
     <View style={[styles.container, density && [styles.compactSpacing, { gap: density.keyGap }], style]} testID="numeric-keypad">
       {/* Channel Entry Readout Display */}
       <View style={[styles.displayCard, density && styles.inlineDisplay]} testID="keypad-channel-display">
-        <Text style={styles.displayLabel}>CHANNEL</Text>
+        <Text style={styles.displayLabel} accessibilityLiveRegion="polite">
+          {status === 'editing' || status === 'sending'
+            ? busy ? 'SELECTING CHANNEL' : channelBuffer ? 'PRESS OK' : 'CHANNEL'
+            : channelStatusLabels[status]}
+        </Text>
         <Text
           style={[styles.displayText, channelBuffer ? styles.displayTextActive : null]}
           testID="keypad-buffer-readout"
@@ -95,9 +120,9 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
       <View style={rowStyle}>
         {/* Backspace Button */}
         <TouchableOpacity
-          style={[keyStyle, styles.specialButton, !isConnected && styles.keyDisabled]}
-          accessibilityState={{ disabled: !isConnected }}
-          disabled={!isConnected}
+          style={[keyStyle, styles.specialButton, !enabled && styles.keyDisabled]}
+          accessibilityState={{ disabled: !enabled }}
+          disabled={!enabled}
           activeOpacity={0.65}
           onPress={onBackspacePress}
           testID="btn-digit-backspace"
@@ -112,9 +137,9 @@ export const NumericKeypadView: React.FC<NumericKeypadViewProps> = ({
 
         {/* OK / Confirm Button */}
         <TouchableOpacity
-          style={[keyStyle, styles.okButton, !isConnected && styles.keyDisabled]}
-          accessibilityState={{ disabled: !isConnected }}
-          disabled={!isConnected}
+          style={[keyStyle, styles.okButton, (!canEdit || !channelBuffer) && styles.keyDisabled]}
+          accessibilityState={{ disabled: !canEdit || !channelBuffer, busy }}
+          disabled={!canEdit || !channelBuffer}
           activeOpacity={0.65}
           onPress={onOkPress}
           testID="btn-digit-ok"

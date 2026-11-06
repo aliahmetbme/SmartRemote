@@ -1,7 +1,10 @@
+import { ChannelSelectionResult, IChannelSelectionAdapter } from '../../domain/interfaces/IChannelSelectionAdapter';
+import { TVConnectionError } from '../../domain/errors/TVConnectionError';
 import { canAttemptCapability, TVCapability } from '../../domain/entities/TVCapabilities';
 import { NavigationDirection, RemoteKey } from '../../domain/enums/RemoteKey';
 import { TVUnsupportedOperationError } from '../../domain/errors/TVUnsupportedOperationError';
 import {
+  ITVRemoteAdapter,
   supportsAppLaunch,
   supportsInputSwitch,
   supportsPointer,
@@ -12,8 +15,8 @@ import {
 import { TVConnectionManager } from '../services/TVConnectionManager';
 
 export type RemoteCommand =
-  | { type: 'key'; key: RemoteKey }
-  | { type: 'digit'; digit: number }
+  | { type: 'key'; key: RemoteKey; isCurrent?: () => boolean }
+  | { type: 'digit'; digit: number; isCurrent?: () => boolean }
   | { type: 'volumeUp' }
   | { type: 'volumeDown' }
   | { type: 'mute' }
@@ -112,6 +115,19 @@ function requiredCapability(command: RemoteCommand): TVCapability {
 export class SendRemoteCommandUseCase {
   constructor(private readonly manager: TVConnectionManager) {}
 
+  async selectChannel(number: string, targetId: string | null | undefined, isCurrent: () => boolean): Promise<ChannelSelectionResult> {
+    if (!/^\d{1,4}$/.test(number)) throw new RangeError('Invalid keypad channel draft');
+    const revision = this.manager.getOperationRevision();
+    const adapter = this.manager.getReadyAdapter() as ITVRemoteAdapter & Partial<IChannelSelectionAdapter>;
+    const current = () => {
+      if (!isCurrent() || this.manager.getOperationRevision() !== revision ||
+          (targetId != null && this.manager.getDevice()?.id !== targetId)) return false;
+      try { return this.manager.getReadyAdapter() === adapter; } catch { return false; }
+    };
+    if (!current()) throw new TVConnectionError('Channel selection cancelled', 'cancelled');
+    return adapter.selectChannel ? adapter.selectChannel(number, current) : 'unsupported';
+  }
+
   async execute(command: RemoteCommand): Promise<void> {
     const adapter = this.manager.getReadyAdapter();
     if (!canAttemptCapability(adapter.getCapabilities(), requiredCapability(command))) {
@@ -119,14 +135,24 @@ export class SendRemoteCommandUseCase {
     }
     const unsupported = () => new TVUnsupportedOperationError(command.type, 'adapter lacks support');
 
+    const sendKey = (key: RemoteKey, isCurrent?: () => boolean) => {
+      if (!isCurrent) return adapter.sendKey(key);
+      const current = () => {
+        if (!isCurrent()) return false;
+        try { return this.manager.getReadyAdapter() === adapter; } catch { return false; }
+      };
+      if (!current()) throw new TVConnectionError('Channel submission cancelled', 'cancelled');
+      return adapter.sendKey(key, current);
+    };
+
     switch (command.type) {
       case 'key':
-        return adapter.sendKey(command.key);
+        return sendKey(command.key, command.isCurrent);
       case 'digit': {
         if (!Number.isInteger(command.digit) || command.digit < 0 || command.digit > 9) {
           throw new RangeError('Digit must be an integer between 0 and 9');
         }
-        return adapter.sendKey(DIGIT_KEYS[command.digit]);
+        return sendKey(DIGIT_KEYS[command.digit], command.isCurrent);
       }
       case 'volumeUp':
         return adapter.volumeUp();

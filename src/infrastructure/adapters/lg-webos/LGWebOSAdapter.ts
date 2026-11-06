@@ -1,3 +1,4 @@
+import { ChannelSelectionResult, IChannelSelectionAdapter } from '../../../domain/interfaces/IChannelSelectionAdapter';
 import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { canonicalizeMacAddress, isValidMacAddress } from '../../../domain/utils/macValidator';
 import { InstalledApp } from '../../../domain/entities/InstalledApp';
@@ -85,6 +86,7 @@ const HOST_PATTERN = /^[A-Za-z0-9.-]+$/;
 
 export class LGWebOSAdapter
   implements
+    IChannelSelectionAdapter,
     ITVRemoteAdapter,
     IVolumeSetAdapter,
     IAppLaunchAdapter,
@@ -275,7 +277,7 @@ export class LGWebOSAdapter
 
   // ---- generic remote operations ----
 
-  sendKey(key: RemoteKey): Promise<void> {
+  sendKey(key: RemoteKey, isCurrent?: () => boolean): Promise<void> {
     if (key === RemoteKey.Mute) {
       return this.mute();
     }
@@ -283,7 +285,7 @@ export class LGWebOSAdapter
     if (!command) {
       return Promise.reject(new TVUnsupportedOperationError(`sendKey(${key})`));
     }
-    return this.execute(command, `sendKey(${key})`, keyCapability(key));
+    return this.execute(command, `sendKey(${key})`, keyCapability(key), isCurrent);
   }
   volumeUp() {
     return this.execute(LGWebOSCommandMapper.volumeUp(), 'volumeUp', 'volumeControl');
@@ -291,6 +293,76 @@ export class LGWebOSAdapter
   volumeDown() {
     return this.execute(LGWebOSCommandMapper.volumeDown(), 'volumeDown', 'volumeControl');
   }
+  private channelChangeInFlight: Promise<Record<string, unknown>> | null = null;
+
+  async selectChannel(number: string, isCurrent: () => boolean): Promise<ChannelSelectionResult> {
+    const client = this.client;
+    const attempt = this.attempt;
+    const checkCurrent = () => {
+      if (!isCurrent() || attempt !== this.attempt || this.client !== client ||
+          this.state !== TVConnectionState.Connected) {
+        throw new TVConnectionError('Channel selection cancelled', 'cancelled');
+      }
+    };
+    checkCurrent();
+    if (!client) return 'transport-error';
+
+    // Also serialize writes across keypad remounts on the same adapter.
+    while (this.channelChangeInFlight) {
+      await this.channelChangeInFlight.catch(() => undefined);
+      checkCurrent();
+    }
+    const write = client.request(SSAP_URI.openChannel, { channelNumber: number }, 2000);
+    this.channelChangeInFlight = write;
+    let accepted: Record<string, unknown>;
+    try {
+      accepted = await write;
+    } catch (error) {
+      checkCurrent();
+      if (!(error instanceof LGWebOSRequestError)) return 'transport-error';
+      if (error.statusCode === 401 || error.statusCode === 403) return 'permission-denied';
+      if (/channel (?:not found|unavailable|does not exist)/i.test(error.message)) return 'channel-unavailable';
+      if (/(?:source|input).*(?:not supported|unavailable)|not (?:in|on) live tv/i.test(error.message)) return 'source-unavailable';
+      if (error.statusCode === 404 || error.statusCode === 501) return 'unsupported';
+      return 'rejected';
+    } finally {
+      if (this.channelChangeInFlight === write) this.channelChangeInFlight = null;
+    }
+    checkCurrent();
+    if (accepted.returnValue !== true) return 'accepted-unverified';
+
+    // Give the tuner one bounded settling window before treating an earlier channel as a mismatch.
+    const normalize = (value: unknown): string | undefined => {
+      const text = typeof value === 'string' ? value.trim() :
+        typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : '';
+      if (/^\d+$/.test(text)) return text.replace(/^0+(?=\d)/, '');
+      return /^\d+[-.]\d+$/.test(text) ? text : undefined;
+    };
+    const requested = normalize(number);
+    let previous: string | undefined;
+    for (let read = 0; read < 2; read++) {
+      checkCurrent();
+      let actual: string | undefined;
+      try {
+        const channel = await client.request(SSAP_URI.currentChannel, undefined, 500);
+        actual = normalize(channel.channelNumber);
+      } catch (error) {
+        checkCurrent();
+        if (error instanceof LGWebOSRequestError && (error.statusCode === 404 || error.statusCode === 501)) {
+          return 'readback-unavailable';
+        }
+      }
+      checkCurrent();
+      if (actual !== undefined && actual === requested) return 'confirmed';
+      if (read === 1) {
+        return actual !== undefined && actual === previous ? 'mismatch' : 'accepted-unverified';
+      }
+      previous = actual;
+      await new Promise<void>(resolve => (this.deps.scheduler ?? defaultScheduler).setTimeout(resolve, 250));
+    }
+    return 'accepted-unverified';
+  }
+
   channelUp() {
     return this.execute(LGWebOSCommandMapper.channelUp(), 'channelUp', 'channelControl');
   }
@@ -611,6 +683,7 @@ export class LGWebOSAdapter
     command: LGWebOSCommand,
     operation: string,
     capability: TVCapability,
+    isCurrent?: () => boolean,
   ): Promise<void> {
     this.requireReady(operation, capability);
     if (command.kind === 'ssap') {
@@ -628,7 +701,11 @@ export class LGWebOSAdapter
       return;
     }
     try {
-      (await this.ensurePointer()).sendButton(command.name);
+      const pointer = await this.ensurePointer();
+      if (isCurrent && !isCurrent()) {
+        throw new TVConnectionError('Channel submission cancelled', 'cancelled');
+      }
+      pointer.sendButton(command.name);
       if (this.capabilities[capability] === 'unknown') {
         this.capabilities = { ...this.capabilities, [capability]: 'supported' };
       }
