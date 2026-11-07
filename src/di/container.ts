@@ -1,3 +1,7 @@
+import { bindConnectionDiagnostics } from './bindConnectionDiagnostics';
+import { readLocalNetworkStatus } from '../infrastructure/services/LocalNetworkStatus';
+import type { LocalNetworkStatus } from '../domain/entities/ConnectionDiagnostic';
+import { bindRemotePreferences } from './bindRemotePreferences';
 import { Platform } from 'react-native';
 import { DiscoveryManager } from '../application/services/DiscoveryManager';
 import { TVConnectionManager } from '../application/services/TVConnectionManager';
@@ -43,6 +47,7 @@ import { bindConnectionToStore } from './bindConnectionToStore';
 
 export interface ContainerOverrides {
   keyValueStorage?: IKeyValueStorage;
+  readNetworkStatus?: () => Promise<LocalNetworkStatus>;
   deviceRepository?: ITVDeviceRepository;
   adapterFactory?: ITVAdapterFactory;
   scheduler?: Scheduler;
@@ -56,11 +61,13 @@ export interface ContainerOverrides {
 
 export function createContainer(overrides: ContainerOverrides = {}) {
   const store: AppStore = createAppStore();
+  const keyValueStorage = overrides.keyValueStorage ?? new InMemoryKeyValueStorage();
+  const remotePreferences = bindRemotePreferences(store, keyValueStorage);
   const credentialStorage: ICredentialStorage =
     overrides.credentialStorage ?? new InMemoryCredentialStorage();
   const deviceRepository: ITVDeviceRepository =
     overrides.deviceRepository ??
-    new LocalTVDeviceRepository(overrides.keyValueStorage ?? new InMemoryKeyValueStorage());
+    new LocalTVDeviceRepository(keyValueStorage);
   const adapterFactory =
     overrides.adapterFactory ??
     createDefaultAdapterFactory({
@@ -72,6 +79,7 @@ export function createContainer(overrides: ContainerOverrides = {}) {
     scheduler: overrides.scheduler,
   });
   bindConnectionToStore(connectionManager, store.dispatch, deviceRepository, store.getState);
+  const disposeDiagnostics = bindConnectionDiagnostics(connectionManager, store, overrides.readNetworkStatus ?? readLocalNetworkStatus);
 
   const manualStrategy = overrides.manualStrategy ?? new ManualIPDiscoveryStrategy();
   const udpTransport = new NativeUdpSocketTransport();
@@ -113,6 +121,8 @@ export function createContainer(overrides: ContainerOverrides = {}) {
 
   return {
     store,
+    remotePreferences,
+    disposeDiagnostics,
     adapterFactory,
     deviceRepository,
     connectionManager,

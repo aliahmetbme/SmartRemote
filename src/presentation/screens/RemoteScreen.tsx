@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   ScrollView,
   StyleSheet,
   Alert,
-  AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppSelector } from '../../store/hooks';
@@ -18,13 +17,13 @@ import {
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
 import { TVCapability } from '../../domain/entities/TVCapabilities';
 import { useContainer } from '../context/ContainerContext';
-import { Touchpad } from '../components/Touchpad';
 import { NumericKeypad } from '../components/NumericKeypad';
-import { MotionSurface } from '../components/MotionSurface';
+import { PointerSurface } from '../components/PointerSurface';
 import { VolumeRocker } from '../components/VolumeRocker';
 import { ChannelRocker } from '../components/ChannelRocker';
 import { DirectionPad } from '../components/DirectionPad';
 import { RemoteMode, RemoteModeSelector } from '../components/RemoteModeSelector';
+import { ConnectionRecovery } from '../components/ConnectionRecovery';
 import { TVConnectionHeader } from '../components/TVConnectionHeader';
 import { RemoteSystemControls } from '../components/RemoteSystemControls';
 import { AppShortcutList } from '../components/AppShortcutList';
@@ -32,11 +31,13 @@ import { InputShortcutList } from '../components/InputShortcutList';
 import { theme, usePresentationLayout, getRemoteGeometry, getRemoteCardLayout, useRemoteDensity, layoutTokens } from '../theme';
 
 interface RemoteScreenProps {
+  isFocused?: boolean;
   onNavigateToDiscovery?: () => void;
   onNavigateToSettings?: () => void;
 }
 
 export const RemoteScreen: React.FC<RemoteScreenProps> = ({
+  isFocused = true,
   onNavigateToDiscovery,
   onNavigateToSettings,
 }) => {
@@ -58,29 +59,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
   const capabilities = useAppSelector(selectCapabilities);
 
   const [activeTab, setActiveTab] = useState<RemoteMode>('buttons');
-  const [motionAvailable, setMotionAvailable] = useState(!container.motionSamplingOnAim);
-  useEffect(() => {
-    if (!container.motionSamplingOnAim) {
-      setMotionAvailable(true);
-      return;
-    }
-    let revision = 0;
-    const refresh = () => {
-      const request = ++revision;
-      container.motionSensorService.isAvailable().catch(() => false).then(available => {
-        if (request !== revision) return;
-        setMotionAvailable(available);
-        if (!available) setActiveTab(mode => mode === 'motion' ? 'buttons' : mode);
-      });
-    };
-    refresh();
-    const subscription = AppState.addEventListener('change', state => {
-      if (state === 'active') refresh();
-    });
-    return () => { ++revision; subscription.remove(); };
-  }, [container.motionSamplingOnAim, container.motionSensorService]);
-  const [isTouchpadActive, setIsTouchpadActive] = useState<boolean>(false);
-  const [isMotionActive, setIsMotionActive] = useState<boolean>(false);
+  const [isPointerActive, setIsPointerActive] = useState<boolean>(false);
   const [launchingAppId, setLaunchingAppId] = useState<string | null>(null);
   const [isWaking, setIsWaking] = useState<boolean>(false);
   const [_wakeStatusText, setWakeStatusText] = useState<string | null>(null);
@@ -93,7 +72,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
   const tvDisplayName = activeDevice
     ? activeDevice.name
     : activeDeviceId
-    ? `LG TV (${activeDeviceId})`
+    ? 'LG TV'
     : 'No TV Selected';
 
   const isConnected = connectionStatus === TVConnectionState.Connected;
@@ -233,8 +212,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
   };
 
   const handleTabChange = (tab: RemoteMode) => {
-    setIsTouchpadActive(false);
-    setIsMotionActive(false);
+    setIsPointerActive(false);
     setActiveTab(tab);
   };
 
@@ -320,7 +298,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
           paddingRight: layout.pagePadding + insets.right,
         },
       ]}
-      scrollEnabled={!isTouchpadActive && !isMotionActive}
+      scrollEnabled={!isPointerActive}
       testID="remote-screen"
     >
       {/* 1. Connected TV header & Switch button */}
@@ -331,12 +309,12 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
         onNavigateToDiscovery={onNavigateToDiscovery}
       />
 
-      {/* 2. 3-Mode Selector: Buttons | Touchpad | Motion */}
+      <ConnectionRecovery onFindTV={onNavigateToDiscovery} onSettings={onNavigateToSettings}
+        onWake={activeDevice?.id === activeDeviceId && activeDevice?.macAddress ? handlePowerPress : undefined} />
+
+      {/* Buttons and Pointer share system controls. */}
       <RemoteModeSelector
-        activeMode={activeTab}
-        onModeChange={handleTabChange}
-        motionAvailable={motionAvailable}
-        stacked={layout.modeStacked}
+        activeMode={activeTab} onModeChange={handleTabChange} stacked={layout.modeStacked}
       />
 
       {/* Remote Body Card */}
@@ -409,28 +387,10 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
           </View>
         )}
 
-        {activeTab === 'touchpad' && (
-          /* Touchpad Mode: Touchpad surface with Rockers accessible underneath */
+        {isFocused && activeTab === 'pointer' && (
           <View style={styles.touchpadSection}>
-            <Touchpad
-              style={styles.touchpadExpandedSurface}
-              onActiveChange={setIsTouchpadActive}
-            />
+            <PointerSurface onActiveChange={setIsPointerActive} />
             <View style={styles.touchpadRockersRow}>
-              {volumeRocker}
-              {channelRocker}
-            </View>
-          </View>
-        )}
-
-        {activeTab === 'motion' && (
-          /* Motion Mode: Hold-to-aim surface with Rockers accessible underneath */
-          <View style={styles.motionSection}>
-            <MotionSurface
-              style={styles.motionExpandedSurface}
-              onActiveChange={setIsMotionActive}
-            />
-            <View style={styles.motionRockersRow}>
               {volumeRocker}
               {channelRocker}
             </View>
@@ -484,11 +444,6 @@ const styles = StyleSheet.create({
   touchpadSection: {
     marginBottom: theme.spacing.lg,
   },
-  touchpadExpandedSurface: {
-    height: 220,
-    marginVertical: 0,
-    marginBottom: theme.spacing.md,
-  },
   touchpadRockersRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -498,18 +453,5 @@ const styles = StyleSheet.create({
   },
   numbersKeypadSurface: {
     marginBottom: 0,
-  },
-  motionSection: {
-    marginBottom: theme.spacing.lg,
-  },
-  motionExpandedSurface: {
-    marginBottom: theme.spacing.md,
-  },
-  motionRockersRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 16,
   },
 });

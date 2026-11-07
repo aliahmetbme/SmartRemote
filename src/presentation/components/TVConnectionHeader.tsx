@@ -20,6 +20,7 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
   connectionStatus,
   onNavigateToDiscovery,
 }) => {
+  const friendlyName = tvDisplayName.replace(/\s*\(?\b(?:\d{1,3}\.){3}\d{1,3}\b\)?/g, '').trim() || 'LG TV';
   const layout = usePresentationLayout();
   const density = useRemoteDensity();
   const renderStatusBadge = () => {
@@ -50,7 +51,7 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
       case TVConnectionState.Error:
       case TVConnectionState.Disconnected:
       default:
-        text = 'Offline';
+        text = connectionStatus === TVConnectionState.Error ? "Can't connect" : 'Disconnected';
         color = theme.colors.error;
         break;
     }
@@ -70,8 +71,8 @@ export const TVConnectionHeader: React.FC<TVConnectionHeaderProps> = ({
   return (
     <View style={[styles.topBar, density && { marginBottom: density.sectionGap }, (stacked ?? layout.headerStacked) && styles.stacked]} testID="remote-header">
       <View style={styles.tvInfoCol}>
-        <Text style={styles.tvName} testID="tv-header-title">
-          {tvDisplayName}
+        <Text style={styles.tvName} numberOfLines={1} ellipsizeMode="tail" accessibilityLabel={friendlyName} testID="tv-header-title">
+          {friendlyName}
         </Text>
         {renderStatusBadge()}
       </View>

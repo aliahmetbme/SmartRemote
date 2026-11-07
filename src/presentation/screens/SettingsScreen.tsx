@@ -17,6 +17,10 @@ import {
   selectSelectedDeviceId,
   selectSelectedDevice,
 } from '../../store/selectors';
+import { classifyConnectionFailure } from '../../domain/entities/ConnectionDiagnostic';
+import { connectionGuidance } from '../connectionGuidance';
+import { MotionSettings } from '../components/MotionSettings';
+import { version } from '../../../package.json';
 import { tvActions } from '../../store/slices/tvSlice';
 import { TVConnectionState } from '../../domain/enums/TVConnectionState';
 import { isValidMacAddress } from '../../domain/utils/macValidator';
@@ -25,6 +29,7 @@ import { theme, usePresentationLayout, platformPresentation } from '../theme';
 
 export const SettingsScreen: React.FC = () => {
   const container = useContainer();
+  const [developerOpen, setDeveloperOpen] = useState(false);
   const dispatch = useAppDispatch();
   const insets = useSafeAreaInsets();
   const layout = usePresentationLayout(insets.left + insets.right);
@@ -32,6 +37,7 @@ export const SettingsScreen: React.FC = () => {
   const savedDevices = useAppSelector(selectSavedDevices);
   const activeDeviceId = useAppSelector(selectSelectedDeviceId);
   const connectionStatus = useAppSelector(selectConnectionStatus);
+  const diagnostic = useAppSelector(state => state.connection.diagnostic);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isEditingMac, setIsEditingMac] = useState<boolean>(false);
@@ -104,8 +110,9 @@ export const SettingsScreen: React.FC = () => {
     try {
       await container.useCases.connectTV.execute(device);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not connect to TV';
-      Alert.alert('Connection Failed', msg);
+      if ((err as { code?: unknown })?.code === 'cancelled') return;
+      const guidance = connectionGuidance(classifyConnectionFailure(err).category);
+      Alert.alert(guidance.title, guidance.message);
     }
   };
 
@@ -121,8 +128,9 @@ export const SettingsScreen: React.FC = () => {
     try {
       await container.useCases.reconnectTV.execute();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not reconnect to TV';
-      Alert.alert('Reconnect Failed', msg);
+      if ((err as { code?: unknown })?.code === 'cancelled') return;
+      const guidance = connectionGuidance(classifyConnectionFailure(err).category);
+      Alert.alert(guidance.title, guidance.message);
     }
   };
 
@@ -190,11 +198,11 @@ export const SettingsScreen: React.FC = () => {
       }]}
       testID="settings-screen"
     >
-      <Text style={styles.screenTitle}>Settings & Diagnostics</Text>
+      <Text style={styles.screenTitle}>Settings</Text>
 
       {/* Active TV Connection Status Card */}
       <View style={styles.card}>
-        <Text style={styles.cardHeader}>Current Connection</Text>
+        <Text style={styles.cardHeader}>TV Management · Selected TV</Text>
         {activeDevice ? (
           <View style={styles.infoBlock}>
             <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
@@ -204,10 +212,6 @@ export const SettingsScreen: React.FC = () => {
             <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>IP Address:</Text>
               <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.ipAddress}</Text>
-            </View>
-            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-              <Text style={styles.infoLabel}>Protocol:</Text>
-              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.protocol}</Text>
             </View>
             <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>Status:</Text>
@@ -253,10 +257,84 @@ export const SettingsScreen: React.FC = () => {
         )}
       </View>
 
+      {/* Saved Devices Management */}
+      <View style={styles.card}>
+        <Text style={styles.cardHeader}>Saved TVs ({savedDevices.length})</Text>
+        {isLoading ? (
+          <Text style={styles.emptyText}>Loading saved devices...</Text>
+        ) : savedDevices.length === 0 ? (
+          <Text style={styles.emptyText}>No saved TVs. Connect to a TV to save it for quick access.</Text>
+        ) : (
+          savedDevices.map(device => {
+            const isDeviceActive = device.id === activeDeviceId;
+            const isDeviceConnected =
+              isDeviceActive && connectionStatus === TVConnectionState.Connected;
+            const isDeviceConnecting =
+              isDeviceActive &&
+              (connectionStatus === TVConnectionState.Connecting ||
+                connectionStatus === TVConnectionState.Reconnecting ||
+                connectionStatus === TVConnectionState.Pairing);
+
+            return (
+              <View style={[styles.savedItemRow, layout.stackDetails && styles.savedItemStacked]} key={device.id} testID={`saved-device-${device.id}`}>
+                <View style={styles.savedItemInfo}>
+                  <View style={styles.savedItemHeaderRow}>
+                    <View
+                      style={[
+                        styles.deviceStatusDot,
+                        isDeviceConnected
+                          ? styles.statusDotConnected
+                          : isDeviceConnecting
+                          ? styles.statusDotConnecting
+                          : styles.statusDotOffline,
+                      ]}
+                    />
+                    <Text style={styles.savedItemName}>{device.name}</Text>
+                  </View>
+                  <Text style={styles.savedItemSub}>
+                    {device.ipAddress}
+                    {device.macAddress ? ` • MAC: ${device.macAddress}` : ''} •{' '}
+                    {isDeviceConnected
+                      ? 'Connected'
+                      : isDeviceConnecting
+                      ? 'Connecting...'
+                      : 'Offline'}
+                  </Text>
+                </View>
+
+                <View style={styles.savedItemActions}>
+                  {!isDeviceConnected && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={styles.selectDeviceButton}
+                      onPress={() => handleConnectDevice(device)}
+                      testID={`connect-saved-btn-${device.id}`}
+                    >
+                      <Text style={styles.selectDeviceText}>
+                        {isDeviceConnecting ? 'Connecting...' : 'Connect'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    style={styles.forgetButton}
+                    onPress={() => handleForgetDevice(device.id, device.name)}
+                    testID={`forget-btn-${device.id}`}
+                  >
+                    <Text style={styles.forgetText}>Forget</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })
+        )}
+      </View>
+
+
       {/* Wake-on-LAN Configuration Card */}
       {activeDevice && (
         <View style={styles.card} testID="settings-wol-card">
-          <Text style={styles.cardHeader}>Wake-on-LAN (Power On from Standby)</Text>
+          <Text style={styles.cardHeader}>Connection & Wake</Text>
           <View style={styles.infoBlock}>
             <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
               <Text style={styles.infoLabel}>TV Target:</Text>
@@ -368,79 +446,38 @@ export const SettingsScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Saved Devices Management */}
-      <View style={styles.card}>
-        <Text style={styles.cardHeader}>Saved TV Devices ({savedDevices.length})</Text>
-        {isLoading ? (
-          <Text style={styles.emptyText}>Loading saved devices...</Text>
-        ) : savedDevices.length === 0 ? (
-          <Text style={styles.emptyText}>No saved TVs. Connect to a TV to save it for quick access.</Text>
-        ) : (
-          savedDevices.map(device => {
-            const isDeviceActive = device.id === activeDeviceId;
-            const isDeviceConnected =
-              isDeviceActive && connectionStatus === TVConnectionState.Connected;
-            const isDeviceConnecting =
-              isDeviceActive &&
-              (connectionStatus === TVConnectionState.Connecting ||
-                connectionStatus === TVConnectionState.Reconnecting ||
-                connectionStatus === TVConnectionState.Pairing);
-
-            return (
-              <View style={[styles.savedItemRow, layout.stackDetails && styles.savedItemStacked]} key={device.id} testID={`saved-device-${device.id}`}>
-                <View style={styles.savedItemInfo}>
-                  <View style={styles.savedItemHeaderRow}>
-                    <View
-                      style={[
-                        styles.deviceStatusDot,
-                        isDeviceConnected
-                          ? styles.statusDotConnected
-                          : isDeviceConnecting
-                          ? styles.statusDotConnecting
-                          : styles.statusDotOffline,
-                      ]}
-                    />
-                    <Text style={styles.savedItemName}>{device.name}</Text>
-                  </View>
-                  <Text style={styles.savedItemSub}>
-                    {device.ipAddress}
-                    {device.macAddress ? ` • MAC: ${device.macAddress}` : ''} •{' '}
-                    {isDeviceConnected
-                      ? 'Connected'
-                      : isDeviceConnecting
-                      ? 'Connecting...'
-                      : 'Offline'}
-                  </Text>
-                </View>
-
-                <View style={styles.savedItemActions}>
-                  {!isDeviceConnected && (
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      style={styles.selectDeviceButton}
-                      onPress={() => handleConnectDevice(device)}
-                      testID={`connect-saved-btn-${device.id}`}
-                    >
-                      <Text style={styles.selectDeviceText}>
-                        {isDeviceConnecting ? 'Connecting...' : 'Connect'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    style={styles.forgetButton}
-                    onPress={() => handleForgetDevice(device.id, device.name)}
-                    testID={`forget-btn-${device.id}`}
-                  >
-                    <Text style={styles.forgetText}>Forget</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          })
-        )}
+      <View style={styles.card} testID="remote-preferences-section">
+        <Text style={styles.cardHeader}>Remote Preferences</Text>
+        <Text style={styles.infoLabel}>Motion pointer sensitivity</Text>
+        <MotionSettings section="preferences" />
       </View>
+      <View style={styles.card}>
+        <Text style={styles.cardHeader}>About SmartRemote</Text>
+        <Text style={styles.infoValue}>SmartRemote · {version}</Text>
+      </View>
+      <TouchableOpacity style={styles.reconnectButton} accessibilityRole="button"
+        accessibilityLabel="Developer Settings" accessibilityState={{ expanded: developerOpen }}
+        testID="developer-settings-toggle" onPress={() => setDeveloperOpen(!developerOpen)}>
+        <Text style={styles.reconnectButtonText}>{developerOpen ? 'Close Developer Settings' : 'Developer Settings'}</Text>
+      </TouchableOpacity>
+      {developerOpen && <View testID="developer-settings-section">
+        <Text style={styles.cardHeader}>Developer Settings</Text>
+        <MotionSettings section="developer" />
+        <View style={styles.card}>
+          <Text style={styles.cardHeader}>Connection details</Text>
+          <Text style={styles.infoLabel}>State: {connectionStatus}</Text>
+          {activeDevice && <Text style={styles.infoLabel}>Protocol: {activeDevice.protocol}</Text>}
+          <Text style={styles.infoLabel}>Selected TV identity: {activeDevice?.id ?? 'Unavailable'}</Text>
+          <Text style={styles.infoLabel}>Failure: {diagnostic?.category ?? 'Unavailable'}</Text>
+          <Text style={styles.infoLabel}>Evidence: {diagnostic?.evidence ?? 'Unavailable'}</Text>
+          <Text style={styles.infoLabel}>Confidence: {diagnostic?.confidence ?? 'Unavailable'}</Text>
+          <Text style={styles.infoLabel}>Last failure: {diagnostic ? new Date(diagnostic.failedAt).toISOString() : 'Unavailable'}</Text>
+          <Text style={styles.infoLabel}>Transport code: {diagnostic?.transportCode ?? 'Unavailable'}</Text>
+          <Text style={styles.infoLabel}>Retry attempt: {diagnostic?.retryAttempt ?? 'Unavailable'}</Text>
+          <Text style={styles.infoLabel}>Wi-Fi available: {diagnostic?.network.wifi == null ? 'Unavailable' : String(diagnostic.network.wifi)}</Text>
+          <Text style={styles.infoLabel}>Local network permission: Unavailable</Text>
 
+        </View>
       {/* Network & Platform Diagnostics */}
       <View style={styles.card}>
         <Text style={styles.cardHeader}>Platform & Network Architecture</Text>
@@ -457,11 +494,12 @@ export const SettingsScreen: React.FC = () => {
           <Text style={styles.diagNoticeTitle}>Local Network Privacy & Multicast</Text>
           <Text style={styles.diagNoticeBody}>
             {Platform.OS === 'ios'
-              ? 'On iOS 14+, automatic UDP multicast discovery (SSDP) requires the restricted Apple entitlement com.apple.developer.networking.multicast. SmartRemote utilizes manual IP discovery as a 100% reliable fallback without requiring restricted entitlements.'
+              ? 'On iOS 14+, automatic UDP multicast discovery (SSDP) requires the restricted Apple entitlement com.apple.developer.networking.multicast. SmartRemote offers manual IP entry as an alternative without requiring restricted entitlements.'
               : 'Android supports SSDP multicast discovery using Android WifiManager.MulticastLock alongside manual IP direct connection.'}
           </Text>
         </View>
       </View>
+      </View>}
     </ScrollView>
     </View>
   );

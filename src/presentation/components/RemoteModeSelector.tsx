@@ -2,70 +2,33 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { theme, usePresentationLayout, useRemoteDensity } from '../theme';
 
-export type RemoteMode = 'buttons' | 'touchpad' | 'motion';
-
+export type RemoteMode = 'buttons' | 'pointer';
 export interface RemoteModeSelectorProps {
   stacked?: boolean;
   activeMode: RemoteMode;
   onModeChange: (mode: RemoteMode) => void;
   style?: StyleProp<ViewStyle>;
-  motionAvailable?: boolean;
 }
-
 export const RemoteModeSelector: React.FC<RemoteModeSelectorProps> = ({
-  stacked,
-  activeMode,
-  onModeChange,
-  style,
-  motionAvailable = true,
+  stacked, activeMode, onModeChange, style,
 }) => {
   const layout = usePresentationLayout();
   const density = useRemoteDensity();
-  const segment = density && { paddingVertical: density.segmentPadding, borderRadius: density.smallControlRadius };
-  const motionSelected = motionAvailable && activeMode === 'motion';
+  const modes: { mode: RemoteMode; label: string; id: string }[] = [
+    { mode: 'buttons', label: 'Buttons', id: 'buttons' },
+    { mode: 'pointer', label: 'Pointer', id: 'pointer' },
+  ];
   return (
     <View style={[styles.modeSwitcherRow, density && { padding: density.segmentPadding, marginBottom: density.sectionGap, borderRadius: density.modeRadius }, (stacked ?? layout.modeStacked) && styles.stacked, style]} testID="remote-mode-selector">
-      <TouchableOpacity
-        style={[styles.modeTab, segment, activeMode === 'buttons' && styles.modeTabActive]}
-        onPress={() => onModeChange('buttons')}
-        testID="tab-buttons"
-        accessibilityRole="button"
-        accessibilityLabel="Buttons Mode"
-        accessibilityState={{ selected: activeMode === 'buttons' }}
-      >
-        <Text style={[styles.modeTabText, activeMode === 'buttons' && styles.modeTabTextActive]}>
-          Buttons
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.modeTab, segment, activeMode === 'touchpad' && styles.modeTabActive]}
-        onPress={() => onModeChange('touchpad')}
-        testID="tab-touchpad"
-        accessibilityRole="button"
-        accessibilityLabel="Touchpad Mode"
-        accessibilityState={{ selected: activeMode === 'touchpad' }}
-      >
-        <Text style={[styles.modeTabText, activeMode === 'touchpad' && styles.modeTabTextActive]}>
-          Touchpad
-        </Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.modeTab, segment, motionSelected && styles.modeTabActive]}
-        disabled={!motionAvailable}
-        onPress={() => onModeChange('motion')}
-        testID="tab-motion"
-        accessibilityRole="button"
-        accessibilityLabel={motionAvailable ? 'Motion Mode' : 'Motion unavailable on Android'}
-        accessibilityState={{ selected: motionSelected, disabled: !motionAvailable }}
-      >
-        <Text
-          style={[styles.modeTabText, motionSelected && styles.modeTabTextActive, !motionAvailable && styles.unavailable]}
-        >
-          Motion
-        </Text>
-      </TouchableOpacity>
+      {modes.map(({ mode, label, id }) => {
+        const selected = activeMode === mode;
+        return <TouchableOpacity key={id} style={[styles.modeTab, density && { paddingVertical: density.segmentPadding, borderRadius: density.smallControlRadius }, selected && styles.modeTabActive]}
+          onPress={() => onModeChange(mode)} testID={`tab-${id}`}
+          accessibilityRole="button" accessibilityLabel={`${label} Mode`}
+          accessibilityState={{ selected }}>
+          <Text style={[styles.modeTabText, selected && styles.modeTabTextActive]}>{label}</Text>
+        </TouchableOpacity>;
+      })}
     </View>
   );
 };

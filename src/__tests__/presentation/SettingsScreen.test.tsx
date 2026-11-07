@@ -149,4 +149,28 @@ describe('SettingsScreen Component', () => {
 
     await cleanup();
   });
+  it('relocates advanced controls behind Developer Settings and retains preferences across remounts without sampling', async () => {
+    const { container, render, cleanup } = createTestEnv();
+    const start = jest.spyOn(container.motionSensorService, 'start');
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => { tree = render(); });
+    expect(tree.root.findAllByProps({ testID: 'motion-invert-x-toggle' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'motion-diag-toggle' })).toHaveLength(0);
+    await ReactTestRenderer.act(async () => { tree.root.findByProps({ testID: 'motion-sensitivity-plus' }).props.onPress(); });
+    await ReactTestRenderer.act(async () => { tree.root.findByProps({ testID: 'developer-settings-toggle' }).props.onPress(); });
+    await ReactTestRenderer.act(async () => {
+      tree.root.findByProps({ testID: 'motion-invert-x-toggle' }).props.onPress();
+      tree.root.findByProps({ testID: 'motion-invert-y-toggle' }).props.onPress();
+      tree.root.findByProps({ testID: 'motion-diag-toggle' }).props.onPress();
+    });
+    expect(container.store.getState().remote.motionPreferences).toEqual({ automaticMotion: true, sensitivity: 1.2, invertX: true, invertY: true, diagnosticMode: true });
+    expect(JSON.stringify(tree.toJSON())).not.toMatch(/clientKey|privateKey|pairingToken|TLS bypass/);
+    await cleanup();
+    await ReactTestRenderer.act(async () => { tree = render(); });
+    expect(tree.root.findByProps({ testID: 'motion-sensitivity-value' }).props.children.join('')).toBe('1.2x');
+    expect(tree.root.findAllByProps({ testID: 'developer-settings-section' })).toHaveLength(0);
+    expect(start).not.toHaveBeenCalled();
+    await cleanup();
+  });
+
 });

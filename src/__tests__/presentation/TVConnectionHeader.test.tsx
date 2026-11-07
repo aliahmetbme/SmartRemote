@@ -60,4 +60,28 @@ describe('TVConnectionHeader (Presentational Component)', () => {
     switchBtn.props.onPress();
     expect(onNavigateToDiscovery).toHaveBeenCalledTimes(1);
   });
+  it.each(['LG webOS TV (192.168.1.50)', '192.168.1.50'])('hides IP addresses in saved names: %s', name => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => { renderer = ReactTestRenderer.create(<TVConnectionHeader tvDisplayName={name} connectionStatus={TVConnectionState.Reconnecting} />); });
+    const title = renderer.root.findByProps({ testID: 'tv-header-title' });
+    expect(title.props.children).not.toMatch(/192\.168/);
+    expect(title.props.accessibilityLabel).not.toMatch(/192\.168/);
+    expect(renderer.root.findByProps({ children: 'Reconnecting...' })).toBeDefined();
+    act(() => renderer.unmount());
+  });
+
+  it('truncates long names visually and retains the complete accessible name and switch action', () => {
+    const name = 'Living Room '.repeat(20);
+    const switchTV = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => { renderer = ReactTestRenderer.create(<TVConnectionHeader tvDisplayName={name} connectionStatus={TVConnectionState.Pairing} onNavigateToDiscovery={switchTV} />); });
+    const title = renderer.root.findByProps({ testID: 'tv-header-title' });
+    expect(title.props.numberOfLines).toBe(1);
+    expect(title.props.accessibilityLabel).toBe(name.trim());
+    expect(renderer.root.findByProps({ children: 'Pairing with TV...' })).toBeDefined();
+    act(() => renderer.root.findByProps({ testID: 'switch-tv-btn' }).props.onPress());
+    expect(switchTV).toHaveBeenCalledTimes(1);
+    act(() => renderer.unmount());
+  });
+
 });

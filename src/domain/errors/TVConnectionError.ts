@@ -1,4 +1,5 @@
 export type TVConnectionErrorCode =
+  | 'tls_trust_failure'
   | 'connection_failed'
   | 'timeout'
   | 'cancelled'

@@ -17,7 +17,7 @@ function App({ container }: AppProps) {
 
   useEffect(() => {
     // Single authoritative startup workflow:
-    // onHydrated renders saved devices and selected TV immediately (< 5ms) without waiting on network.
+    // onHydrated renders saved devices and selected TV without waiting on network.
     // Network restoration proceeds asynchronously and non-blockingly in the background.
     activeContainer.useCases.startupRestoration
       .execute({
@@ -28,15 +28,8 @@ function App({ container }: AppProps) {
           }
         },
       })
-      .then(result => {
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(
-            `[SmartRemote][Startup] Restoration completed: restored='${result.restoredDevice?.id ?? 'none'}', savedCount=${result.savedDevices.length}, error='${result.error?.message ?? 'none'}'`,
-          );
-        }
-      })
-      .catch(err => {
-        console.warn('[SmartRemote][Startup] Non-fatal restoration error:', err);
+      .catch(() => {
+        if (__DEV__) console.warn('[SmartRemote][Startup] Restoration failed');
       });
 
     // Stage 3: AppState lifecycle monitoring for foreground liveness & background suspension

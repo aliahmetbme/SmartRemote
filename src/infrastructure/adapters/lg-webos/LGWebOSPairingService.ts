@@ -1,3 +1,4 @@
+import { timeConnectionStage } from '../../../diagnostics/connectionTiming';
 import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { TVConnectionError, TVTimeoutError } from '../../../domain/errors/TVConnectionError';
 import { TVPairingError } from '../../../domain/errors/TVPairingError';
@@ -70,7 +71,7 @@ export class LGWebOSPairingService {
       throw client.getLastCloseError() ?? new TVConnectionError('Cannot pair: SSAP connection to TV is not open');
     }
 
-    const storedKey = await this.credentials.get(deviceId);
+    const storedKey = await timeConnectionStage('credential-read', () => this.credentials.get(deviceId));
 
     if (!client.isOpen()) {
       throw client.getLastCloseError() ?? new TVConnectionError('Connection to TV closed before registration could be sent');
@@ -97,7 +98,7 @@ export class LGWebOSPairingService {
           finish(new TVPairingError('TV completed pairing without a client key'));
           return;
         }
-        const persist = key === storedKey ? Promise.resolve() : this.credentials.set(deviceId, key);
+        const persist = key === storedKey ? Promise.resolve() : timeConnectionStage('credential-write', () => this.credentials.set(deviceId, key));
         persist.then(
           () => finish(),
           e => finish(new TVPairingError('Could not store the pairing key securely', e)),
@@ -131,7 +132,7 @@ export class LGWebOSPairingService {
               // Stale/rejected key, clear it so next attempt will prompt freshly
               this.credentials.remove(deviceId).catch(() => {});
             }
-            finish(new TVPairingError(message.error ?? 'Pairing was rejected by the TV'));
+            finish(new TVPairingError(message.error ?? 'Pairing was rejected by the TV', undefined, 'rejected'));
           }
         }),
         client.onClose(error =>

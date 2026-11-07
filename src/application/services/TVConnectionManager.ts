@@ -1,8 +1,9 @@
+import { isRetryableConnectionFailure } from '../../domain/entities/ConnectionDiagnostic';
+import { connectionClock, connectionTiming } from '../../diagnostics/connectionTiming';
 import { TVCapabilities } from '../../domain/entities/TVCapabilities';
 import { TVDevice } from '../../domain/entities/TVDevice';
 import { canTransition, TVConnectionState } from '../../domain/enums/TVConnectionState';
 import { TVConnectionError, TVTimeoutError } from '../../domain/errors/TVConnectionError';
-import { TVPairingError } from '../../domain/errors/TVPairingError';
 import { ITVAdapterFactory } from '../../domain/interfaces/ITVAdapterFactory';
 import { ITVRemoteAdapter } from '../../domain/interfaces/ITVRemoteAdapter';
 import { IScheduler, Scheduler } from '../../domain/interfaces/IScheduler';
@@ -38,6 +39,7 @@ export interface ConnectionSnapshot {
   /** Capabilities reported by the adapter; only set while Connected. */
   capabilities: TVCapabilities | null;
   error: Error | null;
+  retryAttempt?: number;
 }
 
 export type ConnectionListener = (snapshot: ConnectionSnapshot) => void;
@@ -80,6 +82,7 @@ export class TVConnectionManager {
   private shouldRestore = false;
   private isBackgrounded = false;
   private isForegroundHandling = false;
+  private lossCleanup: Promise<void> | null = null;
 
   constructor(
     private readonly adapterFactory: ITVAdapterFactory,
@@ -121,6 +124,7 @@ export class TVConnectionManager {
       device: this.device,
       capabilities: this.capabilities,
       error: this.error,
+      retryAttempt: this.retryCount,
     };
   }
 
@@ -255,12 +259,15 @@ export class TVConnectionManager {
       if (this.state === TVConnectionState.Connected && this.adapter) {
         const adapter = this.adapter;
         const generation = this.generation;
+        const probeStarted = connectionClock();
         let isHealthy = false;
         try {
           isHealthy = (await adapter.checkLiveness?.()) ?? true;
         } catch {
           isHealthy = false;
         }
+
+        connectionTiming('foreground-liveness', probeStarted, isHealthy ? 'healthy' : 'failed');
 
         // If the app was moved back to background while awaiting liveness, abort
         if (this.isBackgrounded || generation !== this.generation || adapter !== this.adapter) {
@@ -297,7 +304,7 @@ export class TVConnectionManager {
         this.clearRetryTimer();
         this.retryCount = 0;
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(`[SmartRemote][AppState] Foreground reconnecting to device ${this.device.id}`);
+          console.log('[SmartRemote][AppState] Foreground reconnecting');
         }
         await this.reconnect().catch(() => undefined);
       }
@@ -440,7 +447,9 @@ export class TVConnectionManager {
         throw new TVConnectionError('Connection superseded during cleanup', 'cancelled', e);
       }
       this.inFlight = null;
-      const retryable = autoRetry && !(e instanceof TVPairingError);
+      this.error = e as Error;
+      const retryable = autoRetry && isRetryableConnectionFailure(e);
+      if (!isRetryableConnectionFailure(e)) this.shouldRestore = false;
       if (retryable) {
         this.scheduleRetry(generation);
       } else {
@@ -480,7 +489,11 @@ export class TVConnectionManager {
 
   private handleConnectionLost(generation: number, error?: Error): void {
     this.error = error ?? null;
-    this.teardown().catch(() => undefined);
+    const closing = this.teardown();
+    this.lossCleanup = closing;
+    closing.then(() => {
+      if (this.lossCleanup === closing) this.lossCleanup = null;
+    });
 
     if (this.isBackgrounded) {
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
@@ -493,6 +506,11 @@ export class TVConnectionManager {
       return;
     }
 
+    if (error && !isRetryableConnectionFailure(error)) {
+      this.shouldRestore = false;
+      this.setState(TVConnectionState.Error);
+      return;
+    }
     this.setState(TVConnectionState.Reconnecting);
     this.scheduleRetry(generation);
   }
@@ -503,7 +521,7 @@ export class TVConnectionManager {
     }
     this.clearRetryTimer();
     if (this.retryCount >= this.policy.maxAttempts) {
-      this.error = new TVConnectionError('Could not reconnect to the TV');
+      this.error = this.error ?? new TVConnectionError('Could not reconnect to the TV');
       this.setState(TVConnectionState.Error);
       return;
     }
@@ -515,15 +533,21 @@ export class TVConnectionManager {
     if (this.state !== TVConnectionState.Reconnecting) {
       this.setState(TVConnectionState.Reconnecting);
     }
-    this.retryTimer = this.scheduler.setTimeout(() => {
-      this.retryTimer = null;
-      if (generation !== this.generation || this.isBackgrounded || !this.device || this.inFlight) {
-        return;
-      }
+    const scheduled = connectionClock();
+    connectionTiming('retry-scheduled', scheduled, 'scheduled');
+    const run = () => {
+      if (generation !== this.generation || this.isBackgrounded || !this.device || this.inFlight) return;
+      connectionTiming('retry-executed', scheduled);
       this.startAttempt(this.device, generation, TVConnectionState.Reconnecting, true).catch(
         () => undefined,
       );
+    };
+    this.retryTimer = this.scheduler.setTimeout(() => {
+      this.retryTimer = null;
+      if (this.lossCleanup) this.lossCleanup.then(run);
+      else run();
     }, delay);
+    this.notify();
   }
 
   private clearRetryTimer(): void {

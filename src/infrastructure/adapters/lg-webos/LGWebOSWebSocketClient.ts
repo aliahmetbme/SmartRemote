@@ -251,7 +251,7 @@ export class LGWebOSWebSocketClient {
           fail(closeError);
           return;
         }
-        this.handleRemoteClose(code, reason);
+        this.handleRemoteClose(code, reason, event);
       };
       socket.onmessage = event => this.handleFrame(event.data);
     });
@@ -372,13 +372,14 @@ export class LGWebOSWebSocketClient {
     }
   }
 
-  private handleRemoteClose(code?: number, reason?: string): void {
+  private handleRemoteClose(code?: number, reason?: string, cause?: unknown): void {
     const detail = [code !== undefined ? `code: ${code}` : null, reason ? `reason: "${reason}"` : null]
       .filter(Boolean)
       .join(', ');
     const error = new TVConnectionError(
       detail ? `Connection to the TV closed (${detail})` : 'Connection to the TV closed',
       'connection_failed',
+      cause,
     );
     this.lastCloseError = error;
     this.opened = false;

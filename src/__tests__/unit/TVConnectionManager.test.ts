@@ -144,6 +144,23 @@ describe('TVConnectionManager', () => {
     expect(manager.getState()).toBe(S.Connected);
   });
 
+  it('waits for loss cleanup when backoff expires before disconnect settles', async () => {
+    const first = mk();
+    const cleanup = gate();
+    jest.spyOn(first, 'disconnect').mockReturnValueOnce(cleanup.promise);
+    const factory = queueFactory([first, mk()]);
+    const manager = new TVConnectionManager(factory);
+    await manager.connect(makeMockDevice());
+    first.simulateConnectionLoss();
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(factory.created).toHaveLength(1);
+    cleanup.open();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(factory.created).toHaveLength(2);
+    expect(manager.getState()).toBe(S.Connected);
+    await manager.disconnect();
+  });
+
   it('stops after bounded attempts', async () => {
     const first = mk();
     const bad = () => mk({ connectError: new TVConnectionError('nope') });

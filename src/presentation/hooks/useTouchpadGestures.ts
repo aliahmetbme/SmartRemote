@@ -10,6 +10,7 @@ export interface UseTouchpadGesturesOptions {
   onMove?: (deltaX: number, deltaY: number) => void;
   onClick?: () => void;
   onActiveChange?: (active: boolean) => void;
+  onCancel?: () => void;
   enabled?: boolean;
   throttleMs?: number;
 }
@@ -30,6 +31,7 @@ export function useTouchpadGestures(
     onMove,
     onClick,
     onActiveChange,
+    onCancel,
     enabled = true,
     throttleMs = 25,
   } = options;
@@ -49,6 +51,9 @@ export function useTouchpadGestures(
 
   const onActiveChangeRef = useRef(onActiveChange);
   onActiveChangeRef.current = onActiveChange;
+
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
 
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
@@ -116,6 +121,7 @@ export function useTouchpadGestures(
       },
 
       onPanResponderTerminate: () => {
+        onCancelRef.current?.();
         setIsPressing(false);
         onActiveChangeRef.current?.(false);
       },

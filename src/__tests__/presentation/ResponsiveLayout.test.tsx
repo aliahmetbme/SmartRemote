@@ -131,20 +131,16 @@ describe('Responsive width and accessibility budgets (not native screenshot test
       }
     }
   });
-  it('marks Android Motion unavailable without changing iOS mode availability', async () => {
-    Object.defineProperty(RN.Platform, 'OS', { configurable: true, value: 'android' });
+  it('shows only Buttons and Pointer navigation on either platform', async () => {
     const change = jest.fn(); let tree!: Renderer.ReactTestRenderer;
-    await act(async () => { tree = Renderer.create(<RemoteModeSelector activeMode="buttons" onModeChange={change} motionAvailable={false} />); });
-    expect(tree.root.findByProps({ testID: 'tab-motion' }).props.disabled).toBe(true);
-    expect(tree.root.findByProps({ testID: 'tab-motion' }).props.accessibilityState.disabled).toBe(true);
-    const motion = tree.root.findByProps({ testID: 'tab-motion' });
-    expect(motion.props.accessibilityLabel).toBe('Motion unavailable on Android');
-    expect(motion.findByType(RN.Text).props.children).toBe('Motion');
-    expect(tree.root.findByProps({ testID: 'tab-buttons' }).props.accessibilityState.selected).toBe(true);
-    Object.defineProperty(RN.Platform, 'OS', { configurable: true, value: 'ios' });
-    await act(async () => { tree.update(<RemoteModeSelector activeMode="buttons" onModeChange={change} />); });
-    expect(tree.root.findByProps({ testID: 'tab-motion' }).props.disabled).toBe(false);
-    await act(async () => tree.unmount());
+    for (const platform of ['android', 'ios']) {
+      Object.defineProperty(RN.Platform, 'OS', { configurable: true, value: platform });
+      await act(async () => { tree = Renderer.create(<RemoteModeSelector activeMode="buttons" onModeChange={change} />); });
+      expect(tree.root.findByProps({ testID: 'tab-pointer' })).toBeDefined();
+      expect(tree.root.findAllByProps({ testID: 'tab-motion' })).toHaveLength(0);
+      expect(tree.root.findByProps({ testID: 'tab-buttons' }).props.accessibilityState.selected).toBe(true);
+      await act(async () => tree.unmount());
+    }
   });
 
   const renderScreen = async (screen: React.ReactElement, state = TVConnectionState.Connected) => {
@@ -166,12 +162,13 @@ describe('Responsive width and accessibility budgets (not native screenshot test
     const tree = await renderScreen(<RemoteScreen />, state);
     await act(async () => tree.root.findByProps({ testID: 'remote-control-cluster' }).props.onLayout({ nativeEvent: { layout: { width: 220 } } }));
     expect(tree.root.findByType(DirectionPad).props.size).toBeLessThanOrEqual(220);
-    expect(tree.root.findByProps({ testID: 'tv-header-title' }).props.numberOfLines).toBeUndefined();
+    expect(tree.root.findByProps({ testID: 'tv-header-title' }).props.numberOfLines).toBe(1);
     expect(tree.root.findByProps({ testID: 'remote-screen' }).props.scrollEnabled).toBe(true);
     await act(async () => tree.unmount());
   });
   it('allows long Settings values to stack and keeps MAC editing keyboard-aware', async () => {
     const tree = await renderScreen(<SettingsScreen />);
+    await act(async () => tree.root.findByProps({ testID: 'developer-settings-toggle' }).props.onPress());
     const value = tree.root.findAllByType(RN.Text).find(node => node.props.children === 'Keychain (Secure) + AsyncStorage')!;
     expect(RN.StyleSheet.flatten(value.parent!.props.style).flexDirection).toBe('column');
     expect(RN.StyleSheet.flatten(value.props.style).textAlign).toBe('left');

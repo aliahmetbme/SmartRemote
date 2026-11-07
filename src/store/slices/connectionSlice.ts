@@ -8,6 +8,7 @@ export interface SerializableError {
 }
 
 export interface ConnectionSliceState {
+  diagnostic?: import('../../domain/entities/ConnectionDiagnostic').ConnectionDiagnostic | null;
   status: TVConnectionState;
   pairingStatus: PairingStatus;
   error: SerializableError | null;
@@ -25,6 +26,7 @@ const connectionSlice = createSlice({
   name: 'connection',
   initialState: initialConnectionState,
   reducers: {
+    diagnosticChanged(state, action: PayloadAction<ConnectionSliceState['diagnostic']>) { state.diagnostic = action.payload; },
     statusChanged(state, action: PayloadAction<TVConnectionState>) {
       state.status = action.payload;
     },

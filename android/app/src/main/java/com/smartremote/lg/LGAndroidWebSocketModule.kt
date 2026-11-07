@@ -91,8 +91,8 @@ class LGAndroidWebSocketModule(private val context: ReactApplicationContext) :
                 }
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     if (sessions.remove(id, session)) {
-                        emit("onLGWebSocketError", id) { putString("message", "Secure LG connection failed: ${t.javaClass.simpleName}. Check Wi-Fi, TV address and certificate trust.") }
-                        emit("onLGWebSocketClosed", id) { putInt("code", 1006); putString("reason", "Secure LG connection failed") }
+                        emit("onLGWebSocketError", id) { putString("message", "Secure LG connection failed"); putString("diagnosticCode", connectionFailureCode(t)) }
+                        emit("onLGWebSocketClosed", id) { putInt("code", 1006); putString("reason", "Secure LG connection failed"); putString("diagnosticCode", connectionFailureCode(t)) }
                     }
                 }
             })
@@ -104,6 +104,19 @@ class LGAndroidWebSocketModule(private val context: ReactApplicationContext) :
         }
     }
 
+    // OS state only, no SSID/location access and no extra socket/probe.
+    @ReactMethod
+    fun getNetworkStatus(promise: Promise) {
+        try {
+            val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val capabilities = manager.allNetworks.mapNotNull { manager.getNetworkCapabilities(it) }
+            val wifi = capabilities.any { it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }
+            val ethernet = capabilities.any { it.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) }
+            promise.resolve(Arguments.createMap().apply {
+                putBoolean("wifi", wifi); putBoolean("localTransport", wifi || ethernet)
+            })
+        } catch (_: Exception) { promise.reject("NETWORK_STATE_UNAVAILABLE", "Network state unavailable") }
+    }
     @ReactMethod
     fun getTLSStatus(id: Int, promise: Promise) {
         val session = sessions[id]

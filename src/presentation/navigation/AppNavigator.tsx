@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme, useIsFocused } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text, View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -67,15 +67,19 @@ interface RemoteWrapperProps {
   };
 }
 
-const RemoteScreenWrapper: React.FC<RemoteWrapperProps> = ({ navigation }) => (
+const RemoteScreenWrapper: React.FC<RemoteWrapperProps> = ({ navigation }) => {
+  const isFocused = useIsFocused();
+  return (
   <RemoteScreen
+    isFocused={isFocused}
     onNavigateToDiscovery={() => navigation.navigate('Discovery')}
     onNavigateToSettings={() => navigation.navigate('Settings')}
   />
 );
+};
 
 const remoteOptions = { tabBarIcon: renderRemoteIcon };
-const discoveryOptions = { tabBarIcon: renderDiscoveryIcon };
+const discoveryOptions = { title: 'TVs', tabBarIcon: renderDiscoveryIcon };
 const settingsOptions = { tabBarIcon: renderSettingsIcon };
 
 export const AppNavigator: React.FC = () => {

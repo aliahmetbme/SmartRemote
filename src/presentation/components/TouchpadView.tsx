@@ -45,6 +45,9 @@ export const TouchpadView: React.FC<TouchpadViewProps> = ({
         !isConnected && styles.containerDisabled,
         style,
       ]}
+      accessible accessibilityLabel="Move television pointer."
+      accessibilityHint="Drag to move. Tap to select."
+      accessibilityState={{ disabled: !isConnected }}
       testID="touchpad-surface"
       {...panHandlers}
     >

@@ -10,8 +10,6 @@ import {
 } from 'react-native';
 import { useContainer } from '../context/ContainerContext';
 import { useMotionPointer } from '../hooks/useMotionPointer';
-import { MotionCalibrationBar } from './MotionCalibrationBar';
-import { MotionDiagnosticOverlay } from './MotionDiagnosticOverlay';
 import { theme } from '../theme';
 
 export interface MotionSurfaceProps {
@@ -30,15 +28,6 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
     isSensorAvailable,
     isAiming,
     sensorStartFailed,
-    sensitivity,
-    setSensitivity,
-    invertX,
-    setInvertX,
-    invertY,
-    setInvertY,
-    isDiagMode,
-    setIsDiagMode,
-    diagData,
     setEngaged,
     recenter,
   } = useMotionPointer({ onActiveChange });
@@ -50,23 +39,6 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
       }
     };
   }, []);
-
-  const handleSensitivityChange = (newVal: number) => {
-    const clamped = Math.max(0.4, Math.min(3.0, Number(newVal.toFixed(1))));
-    setSensitivity(clamped);
-  };
-
-  const handleToggleInvertX = () => {
-    setInvertX(!invertX);
-  };
-
-  const handleToggleInvertY = () => {
-    setInvertY(!invertY);
-  };
-
-  const handleToggleDiag = () => {
-    setIsDiagMode(!isDiagMode);
-  };
 
   const handleRecenter = () => {
     recenter();
@@ -218,30 +190,9 @@ export const MotionSurface: React.FC<MotionSurfaceProps> = ({ style, onActiveCha
         </TouchableOpacity>
       </View>
 
-      {/* Sensitivity & Calibration Controls */}
-      <MotionCalibrationBar
-        sensitivity={sensitivity}
-        onSensitivityChange={handleSensitivityChange}
-        invertX={invertX}
-        onToggleInvertX={handleToggleInvertX}
-        invertY={invertY}
-        onToggleInvertY={handleToggleInvertY}
-        isDiagMode={isDiagMode}
-        onToggleDiag={handleToggleDiag}
-      >
-        {isDiagMode && <MotionDiagnosticOverlay data={diagData} />}
-      </MotionCalibrationBar>
-
-      {/* Brief Usage Instructions */}
       <View style={styles.instructionsContainer}>
         <Text style={styles.instructionLine}>
-          • Point phone at your TV like an LG Magic Remote.
-        </Text>
-        <Text style={styles.instructionLine}>
-          • Hold <Text style={styles.highlightText}>HOLD TO AIM</Text> and move or rotate to guide the pointer.
-        </Text>
-        <Text style={styles.instructionLine}>
-          • Release to freeze the cursor. Tap <Text style={styles.highlightText}>SELECT</Text> to click items.
+          Hold Aim and rotate your phone to move the pointer. Release to pause, then tap Select to click.
         </Text>
       </View>
     </View>
@@ -318,7 +269,8 @@ const styles = StyleSheet.create({
   },
   aimSurface: {
     width: '100%',
-    height: 140,
+    minHeight: 140,
+    padding: theme.spacing.md,
     backgroundColor: '#161B26',
     borderRadius: theme.borderRadius.lg,
     borderWidth: 2,
@@ -382,6 +334,7 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     width: '100%',
     justifyContent: 'space-between',
     marginBottom: theme.spacing.md,

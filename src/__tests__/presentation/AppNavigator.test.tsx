@@ -41,7 +41,7 @@ describe('AppNavigator Component', () => {
 
     // Verify Tab labels are present
     const remoteLabel = renderer!.root.findByProps({ children: 'Remote' });
-    const discoveryLabel = renderer!.root.findByProps({ children: 'Discovery' });
+    const discoveryLabel = renderer!.root.findByProps({ children: 'TVs' });
     const settingsLabel = renderer!.root.findByProps({ children: 'Settings' });
 
     expect(remoteLabel).toBeDefined();

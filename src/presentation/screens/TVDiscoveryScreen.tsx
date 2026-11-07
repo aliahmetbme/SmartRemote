@@ -1,3 +1,5 @@
+import { classifyConnectionFailure } from '../../domain/entities/ConnectionDiagnostic';
+import { connectionGuidance } from '../connectionGuidance';
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -111,17 +113,9 @@ export const TVDiscoveryScreen: React.FC = () => {
     try {
       await container.useCases.connectTV.execute(device);
     } catch (err: unknown) {
-      let msg = err instanceof Error ? err.message : 'Failed to connect to TV';
-      if (
-        msg.toLowerCase().includes('local network') ||
-        msg.toLowerCase().includes('prohibited') ||
-        msg.includes('1009')
-      ) {
-        msg = Platform.OS === 'ios'
-          ? 'Local network access is prohibited. Please open iOS Settings > Privacy & Security > Local Network and ensure SmartRemote is enabled.'
-          : 'Local network access is unavailable. Connect to the same Wi-Fi as the TV and check VPN, firewall and app network restrictions in Android Settings, then retry.';
-      }
-      Alert.alert('Connection Failed', msg);
+      if ((err as { code?: unknown })?.code === 'cancelled') return;
+      const guidance = connectionGuidance(classifyConnectionFailure(err).category);
+      Alert.alert(guidance.title, guidance.message);
     }
   };
 
@@ -200,18 +194,10 @@ export const TVDiscoveryScreen: React.FC = () => {
       await container.useCases.connectTV.execute(device);
       setManualIp('');
     } catch (err: unknown) {
-      let msg = err instanceof Error ? err.message : 'Could not reach or pair with TV at this IP';
-      if (
-        msg.toLowerCase().includes('local network') ||
-        msg.toLowerCase().includes('prohibited') ||
-        msg.includes('1009')
-      ) {
-        msg = Platform.OS === 'ios'
-          ? 'Local network access is prohibited. Please open iOS Settings > Privacy & Security > Local Network and ensure SmartRemote is enabled.'
-          : 'Local network access is unavailable. Connect to the same Wi-Fi as the TV and check VPN, firewall and app network restrictions in Android Settings, then retry.';
-      }
-      setIpError(msg);
-      Alert.alert('Connection Failed', msg);
+      if ((err as { code?: unknown })?.code === 'cancelled') return;
+      const guidance = connectionGuidance(classifyConnectionFailure(err).category);
+      setIpError(guidance.message);
+      Alert.alert(guidance.title, guidance.message);
     } finally {
       setIsProbingIp(false);
     }
@@ -299,7 +285,7 @@ export const TVDiscoveryScreen: React.FC = () => {
           <>
       {/* Header Actions */}
       <View style={[styles.header, layout.headerStacked && styles.stacked]}>
-        <Text style={styles.headerTitle}>TV Discovery</Text>
+        <Text style={styles.headerTitle}>My TVs</Text>
         {canScan && <TouchableOpacity
           style={[styles.scanButton, isScanning && styles.scanningButton]}
           onPress={handleScanToggle}
@@ -324,8 +310,8 @@ export const TVDiscoveryScreen: React.FC = () => {
           <Text style={styles.iosNoticeTitle}>Automatic Discovery Unavailable</Text>
           <Text style={styles.iosNoticeBody}>
             {Platform.OS === 'ios'
-              ? 'This iOS build does not support SSDP multicast. Enter your TV IP address below.'
-              : 'UDP discovery is unavailable in this Android build. Enter your TV IP address below.'}
+              ? 'Automatic scanning is unavailable on this iPhone. Use a saved TV or enter its IP address below.'
+              : 'Automatic scanning is unavailable in this build. Use a saved TV or enter its IP address below.'}
           </Text>
         </View>
       )}
@@ -342,7 +328,7 @@ export const TVDiscoveryScreen: React.FC = () => {
         </View>
         <Text style={styles.sectionSubtitle}>
           {Platform.OS === 'ios'
-            ? 'Direct WebSocket connection and pairing for LG Smart TVs'
+            ? 'Enter the IP address shown in your LG TV network settings.'
             : 'Enter TV IP address directly (e.g. 192.168.1.50)'}
         </Text>
         <View style={[styles.manualIpRow, layout.stackForms && styles.stacked]}>

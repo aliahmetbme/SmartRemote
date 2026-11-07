@@ -4,7 +4,7 @@ import { Provider } from 'react-redux';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RemoteScreen } from '../../presentation/screens/RemoteScreen';
 import { Touchpad } from '../../presentation/components/Touchpad';
-import { MotionSurface } from '../../presentation/components/MotionSurface';
+import { PointerSurface } from '../../presentation/components/PointerSurface';
 import { ContainerProvider } from '../../presentation/context/ContainerContext';
 import { createContainer } from '../../di/container';
 import { connectionActions } from '../../store/slices/connectionSlice';
@@ -40,18 +40,18 @@ describe('RemoteScreen Component', () => {
 
     const onNavigateToDiscovery = jest.fn();
 
-    const render = () =>
-      ReactTestRenderer.create(
+    const element = (isFocused = true) => (
         <SafeAreaProvider initialMetrics={testMetrics}>
           <Provider store={container.store}>
             <ContainerProvider container={container}>
-              <RemoteScreen onNavigateToDiscovery={onNavigateToDiscovery} />
+              <RemoteScreen isFocused={isFocused} onNavigateToDiscovery={onNavigateToDiscovery} />
             </ContainerProvider>
           </Provider>
-        </SafeAreaProvider>,
+        </SafeAreaProvider>
       );
 
-    return { container, mockAdapter, onNavigateToDiscovery, render };
+    const render = (isFocused = true) => ReactTestRenderer.create(element(isFocused));
+    return { container, mockAdapter, onNavigateToDiscovery, render, element };
   };
 
   it('renders disconnected state with disabled controls when not connected', async () => {
@@ -290,12 +290,11 @@ describe('RemoteScreen Component', () => {
     const start = jest.spyOn(container.motionSensorService, 'start');
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => { renderer = render(); });
-    const motion = renderer.root.findByProps({ testID: 'tab-motion' });
-    expect(motion.props.disabled).toBe(!available);
-    if (available) {
-      await ReactTestRenderer.act(async () => { motion.props.onPress(); });
-      expect(renderer.root.findAllByProps({ testID: 'motion-surface' })).not.toHaveLength(0);
-    }
+    await ReactTestRenderer.act(async () => { renderer.root.findByProps({ testID: 'tab-pointer' }).props.onPress(); });
+    expect(renderer.root.findAllByProps({ testID: 'touchpad-surface' })).not.toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'pointer-select' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'tab-motion' })).toHaveLength(0);
+    if (!available) expect(renderer.root.findByProps({ testID: 'pointer-feedback' })).toBeDefined();
     expect(start).not.toHaveBeenCalled();
     await ReactTestRenderer.act(async () => { renderer.unmount(); });
   });
@@ -361,7 +360,7 @@ describe('RemoteScreen Component', () => {
     expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBe(0);
 
     // Switch to Touchpad mode
-    const touchpadModeBtn = renderer!.root.findByProps({ testID: 'tab-touchpad' });
+    const touchpadModeBtn = renderer!.root.findByProps({ testID: 'tab-pointer' });
     await ReactTestRenderer.act(() => {
       touchpadModeBtn.props.onPress();
     });
@@ -371,16 +370,13 @@ describe('RemoteScreen Component', () => {
     expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
     expect(renderer!.root.findAllByProps({ testID: 'numeric-keypad' }).length).toBe(0);
 
-    // Switch to Motion mode
-    const motionModeBtn = renderer!.root.findByProps({ testID: 'tab-motion' });
-    await ReactTestRenderer.act(() => {
-      motionModeBtn.props.onPress();
-    });
+    expect(renderer!.root.findByProps({ testID: 'remote-mode-selector' })).toBeDefined();
+    expect(renderer!.root.findByProps({ testID: 'tab-pointer' }).props.accessibilityState.selected).toBe(true);
+    expect(renderer!.root.findByProps({ testID: 'tab-buttons' }).props.accessibilityState.selected).toBe(false);
 
-    // Motion surface is now mounted; D-Pad and Keypad are unmounted
-    expect(renderer!.root.findAllByProps({ testID: 'motion-surface' }).length).toBeGreaterThan(0);
-    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
-    expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBe(0);
+    // Touchpad and Aim are available together with no inner mode selector.
+    expect(renderer!.root.findByProps({ testID: 'pointer-select' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ testID: 'pointer-method-selector' })).toHaveLength(0);
 
     // Switch back to Buttons mode
     const buttonsModeBtn = renderer!.root.findByProps({ testID: 'tab-buttons' });
@@ -406,7 +402,7 @@ describe('RemoteScreen Component', () => {
 
     // Switch to Touchpad mode
     await ReactTestRenderer.act(() => {
-      renderer.root.findByProps({ testID: 'tab-touchpad' }).props.onPress();
+      renderer.root.findByProps({ testID: 'tab-pointer' }).props.onPress();
     });
 
     const scrollView = renderer!.root.findByProps({ testID: 'remote-screen' });
@@ -444,13 +440,12 @@ describe('RemoteScreen Component', () => {
 
     // Switch to Motion mode
     await ReactTestRenderer.act(() => {
-      renderer.root.findByProps({ testID: 'tab-motion' }).props.onPress();
+      renderer.root.findByProps({ testID: 'tab-pointer' }).props.onPress();
     });
-
     const scrollView = renderer!.root.findByProps({ testID: 'remote-screen' });
     expect(scrollView.props.scrollEnabled).toBe(true);
 
-    const motionSurface = renderer!.root.findByType(MotionSurface);
+    const motionSurface = renderer!.root.findByType(PointerSurface);
     expect(motionSurface).toBeDefined();
 
     // Motion hold starts -> parent scrolling must be disabled
@@ -537,7 +532,7 @@ describe('RemoteScreen Component', () => {
     });
 
     // Switch to Touchpad mode
-    const touchpadModeBtn = renderer!.root.findByProps({ testID: 'tab-touchpad' });
+    const touchpadModeBtn = renderer!.root.findByProps({ testID: 'tab-pointer' });
     await ReactTestRenderer.act(() => {
       touchpadModeBtn.props.onPress();
     });
@@ -619,7 +614,7 @@ describe('RemoteScreen Component', () => {
     expect(sendCommandSpy).toHaveBeenCalledWith({ type: 'channelDown' });
   });
 
-  it('switches to Motion mode, renders MotionSurface, keeps common controls active, and cleans up on mode switch', async () => {
+  it('opens unified Pointer, keeps common controls active, and cleans up on exit', async () => {
     const { container, render } = createTestEnv({
       volumeControl: true,
       channelControl: true,
@@ -648,22 +643,12 @@ describe('RemoteScreen Component', () => {
       renderer = render();
     });
 
-    // Verify all 3 mode selector tabs exist
-    expect(renderer!.root.findByProps({ testID: 'tab-buttons' })).toBeDefined();
-    expect(renderer!.root.findByProps({ testID: 'tab-touchpad' })).toBeDefined();
-    expect(renderer!.root.findByProps({ testID: 'tab-motion' })).toBeDefined();
-
-    // Switch to Motion mode
-    const motionModeBtn = renderer!.root.findByProps({ testID: 'tab-motion' });
-    await ReactTestRenderer.act(() => {
-      motionModeBtn.props.onPress();
-    });
-
-    // MotionSurface is mounted
-    expect(renderer!.root.findAllByProps({ testID: 'motion-surface' }).length).toBeGreaterThan(0);
-
-    // Directional D-pad should NOT be mounted in Motion mode
-    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBe(0);
+    expect(renderer!.root.findByProps({ testID: 'tab-pointer' })).toBeDefined();
+    await ReactTestRenderer.act(async () => { renderer!.root.findByProps({ testID: 'tab-pointer' }).props.onPress(); });
+    expect(renderer!.root.findByProps({ testID: 'pointer-select' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ testID: 'touchpad-surface' }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ testID: 'tab-motion' })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' })).toHaveLength(0);
 
     // Common volume and channel rockers MUST still be mounted and functional
     const volUpBtn = renderer!.root.findByProps({ testID: 'btn-vol-up' });
@@ -678,7 +663,7 @@ describe('RemoteScreen Component', () => {
       buttonsModeBtn.props.onPress();
     });
 
-    expect(renderer!.root.findAllByProps({ testID: 'motion-surface' }).length).toBe(0);
+    expect(renderer!.root.findAllByProps({ testID: 'pointer-surface' }).length).toBe(0);
     expect(renderer!.root.findAllByProps({ testID: 'dpad-cluster' }).length).toBeGreaterThan(0);
   });
 
@@ -701,4 +686,21 @@ describe('RemoteScreen Component', () => {
     expect(contentStyle.paddingTop + frameStyle.paddingTop).toBe(testMetrics.insets.top);
     expect(contentStyle.paddingBottom).toBe(24);
   });
+  it('stops Pointer on tab blur, with no diagnostics in the normal surface', async () => {
+    const { container, render, element } = createTestEnv();
+    jest.spyOn(container.motionSensorService, 'isAvailable').mockResolvedValue(true);
+    jest.spyOn(container.motionSensorService, 'start').mockResolvedValue();
+    const stop = jest.spyOn(container.motionSensorService, 'stop').mockResolvedValue();
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => { tree = render(); });
+    await ReactTestRenderer.act(async () => { tree.root.findByProps({ testID: 'tab-pointer' }).props.onPress(); });
+    expect(tree.root.findAllByType(Touchpad)).toHaveLength(1);
+    expect(tree.root.findAllByProps({ testID: 'motion-diag-toggle' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'motion-sensitivity-plus' })).toHaveLength(0);
+    stop.mockClear();
+    await ReactTestRenderer.act(async () => { tree.update(element(false)); });
+    expect(stop).toHaveBeenCalled();
+    await ReactTestRenderer.act(async () => { tree.unmount(); });
+  });
+
 });

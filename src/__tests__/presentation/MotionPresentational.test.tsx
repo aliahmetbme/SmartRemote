@@ -122,7 +122,7 @@ describe('MotionDiagnosticOverlay (Presentational Component)', () => {
     const card = renderer!.root.findByProps({ testID: 'motion-diag-card' });
     expect(card).toBeDefined();
 
-    const title = card.findByProps({ children: 'LIVE AXIS DIAGNOSTICS (ACC & SMOOTH OFF)' });
+    const title = card.findByProps({ children: 'AXIS DIAGNOSTICS (ACC & SMOOTH OFF)' });
     expect(title).toBeDefined();
   });
 });

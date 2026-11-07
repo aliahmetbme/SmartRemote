@@ -1,3 +1,4 @@
+import { connectionClock, connectionTiming } from '../../diagnostics/connectionTiming';
 import { ChannelSelectionResult, IChannelSelectionAdapter } from '../../domain/interfaces/IChannelSelectionAdapter';
 import { TVConnectionError } from '../../domain/errors/TVConnectionError';
 import { canAttemptCapability, TVCapability } from '../../domain/entities/TVCapabilities';
@@ -113,6 +114,8 @@ function requiredCapability(command: RemoteCommand): TVCapability {
  * AND that the adapter implements the optional interface. Never fakes success.
  */
 export class SendRemoteCommandUseCase {
+  private readonly measuredAdapters = new WeakSet<ITVRemoteAdapter>();
+
   constructor(private readonly manager: TVConnectionManager) {}
 
   async selectChannel(number: string, targetId: string | null | undefined, isCurrent: () => boolean): Promise<ChannelSelectionResult> {
@@ -125,11 +128,28 @@ export class SendRemoteCommandUseCase {
       try { return this.manager.getReadyAdapter() === adapter; } catch { return false; }
     };
     if (!current()) throw new TVConnectionError('Channel selection cancelled', 'cancelled');
-    return adapter.selectChannel ? adapter.selectChannel(number, current) : 'unsupported';
+    if (!adapter.selectChannel) return 'unsupported';
+    const started = connectionClock();
+    const result = await adapter.selectChannel(number, current);
+    if (result === 'confirmed' && current()) this.recordFirstCommand(adapter, started);
+    return result;
   }
 
   async execute(command: RemoteCommand): Promise<void> {
     const adapter = this.manager.getReadyAdapter();
+    if (!__DEV__ || this.measuredAdapters.has(adapter)) return this.dispatch(adapter, command);
+    const started = connectionClock();
+    await this.dispatch(adapter, command);
+    this.recordFirstCommand(adapter, started);
+  }
+
+  private recordFirstCommand(adapter: ITVRemoteAdapter, started: number): void {
+    if (!__DEV__ || this.measuredAdapters.has(adapter)) return;
+    this.measuredAdapters.add(adapter);
+    connectionTiming('first-command-completed', started);
+  }
+
+  private async dispatch(adapter: ITVRemoteAdapter, command: RemoteCommand): Promise<void> {
     if (!canAttemptCapability(adapter.getCapabilities(), requiredCapability(command))) {
       throw new TVUnsupportedOperationError(command.type, 'capability not available on this TV');
     }

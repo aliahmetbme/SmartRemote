@@ -11,6 +11,7 @@ export interface TouchpadProps {
   throttleMs?: number;
   style?: StyleProp<ViewStyle>;
   onActiveChange?: (active: boolean) => void;
+  onCancel?: () => void;
   onMove?: (deltaX: number, deltaY: number) => void;
   onClick?: () => void;
   isConnected?: boolean;
@@ -25,6 +26,7 @@ export const Touchpad: React.FC<TouchpadProps> = ({
   throttleMs = 25,
   style,
   onActiveChange,
+  onCancel,
   onMove: customOnMove,
   onClick: customOnClick,
   isConnected: customIsConnected,
@@ -66,6 +68,7 @@ export const Touchpad: React.FC<TouchpadProps> = ({
     onMove: customOnMove ?? defaultOnMove,
     onClick: customOnClick ?? defaultOnClick,
     onActiveChange,
+    onCancel,
     enabled: isConnected && isAvailable,
     throttleMs,
   });

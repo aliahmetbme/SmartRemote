@@ -1,3 +1,4 @@
+import { connectionClock, connectionTiming, timeConnectionStage } from '../../diagnostics/connectionTiming';
 import { TVDevice } from '../../domain/entities/TVDevice';
 import { ITVDeviceRepository } from '../../domain/interfaces/ITVDeviceRepository';
 import { HydrateDevicesUseCase, HydrationResult } from './HydrateDevicesUseCase';
@@ -37,8 +38,9 @@ export class StartupRestorationUseCase {
   }
 
   async execute(options?: StartupOptions): Promise<StartupResult> {
+    const started = connectionClock();
     const revision = this.hydrateDevices.getRevision();
-    const hydration = await this.hydrateDevices.execute();
+    const hydration = await timeConnectionStage('startup-hydration', () => this.hydrateDevices.execute());
     if (hydration.superseded) {
       return {
         savedDevices: [],
@@ -59,6 +61,7 @@ export class StartupRestorationUseCase {
       }
     }
 
+    connectionTiming('startup-restoration', started, restoredDevice ? 'ready' : error ? 'failed' : 'no-restoration');
     return {
       savedDevices: hydration.savedDevices,
       restoredDevice,

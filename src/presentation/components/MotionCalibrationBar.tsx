@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { theme } from '../theme';
 
 export interface MotionCalibrationBarProps {
+  section?: 'preferences' | 'developer';
   sensitivity: number;
   onSensitivityChange: (newVal: number) => void;
   invertX: boolean;
@@ -19,6 +20,7 @@ export interface MotionCalibrationBarProps {
  * axis inversion pills, and diagnostic mode toggle.
  */
 export const MotionCalibrationBar: React.FC<MotionCalibrationBarProps> = ({
+  section,
   sensitivity,
   onSensitivityChange,
   invertX,
@@ -31,7 +33,7 @@ export const MotionCalibrationBar: React.FC<MotionCalibrationBarProps> = ({
 }) => {
   return (
     <View style={styles.configCard}>
-      <View style={styles.configRow}>
+      {section !== 'developer' && <View style={styles.configRow}>
         <Text style={styles.configLabel}>Sensitivity</Text>
         <View style={styles.stepperContainer}>
           <TouchableOpacity
@@ -60,12 +62,15 @@ export const MotionCalibrationBar: React.FC<MotionCalibrationBarProps> = ({
         </View>
       </View>
 
+      }
+      {section !== 'preferences' && <>
       {/* Direction Inversion Options */}
       <View style={styles.inversionRow}>
         <TouchableOpacity
           style={[styles.togglePill, invertX && styles.togglePillActive]}
           onPress={onToggleInvertX}
           testID="motion-invert-x-toggle"
+          accessibilityState={{ selected: invertX }}
           accessibilityLabel="Invert Horizontal Axis"
           accessibilityRole="button"
         >
@@ -78,6 +83,7 @@ export const MotionCalibrationBar: React.FC<MotionCalibrationBarProps> = ({
           style={[styles.togglePill, invertY && styles.togglePillActive]}
           onPress={onToggleInvertY}
           testID="motion-invert-y-toggle"
+          accessibilityState={{ selected: invertY }}
           accessibilityLabel="Invert Vertical Axis"
           accessibilityRole="button"
         >
@@ -94,6 +100,7 @@ export const MotionCalibrationBar: React.FC<MotionCalibrationBarProps> = ({
             style={[styles.diagToggleBtn, isDiagMode && styles.diagToggleBtnActive]}
             onPress={onToggleDiag}
             testID="motion-diag-toggle"
+            accessibilityState={{ selected: isDiagMode }}
             accessibilityLabel="Toggle Diagnostic Mode"
             accessibilityRole="button"
           >
@@ -105,6 +112,7 @@ export const MotionCalibrationBar: React.FC<MotionCalibrationBarProps> = ({
       )}
 
       {__DEV__ && children}
+      </>}
     </View>
   );
 };
@@ -121,6 +129,8 @@ const styles = StyleSheet.create({
   },
   configRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: theme.spacing.sm,
@@ -139,8 +149,8 @@ const styles = StyleSheet.create({
     borderColor: '#2B354C',
   },
   stepperBtn: {
-    width: 38,
-    height: 34,
+    minWidth: 48,
+    minHeight: 48,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -158,10 +168,13 @@ const styles = StyleSheet.create({
   },
   inversionRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     marginVertical: 4,
   },
   togglePill: {
+    minHeight: 48,
+    justifyContent: 'center',
     flex: 1,
     paddingVertical: 7,
     marginHorizontal: 3,
@@ -187,6 +200,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   diagToggleBtn: {
+    minHeight: 48,
+    justifyContent: 'center',
     width: '100%',
     paddingVertical: 8,
     backgroundColor: '#161B26',

@@ -1,3 +1,4 @@
+import { connectionClock, connectionTiming, timeConnectionStage } from '../../../diagnostics/connectionTiming';
 import { ChannelSelectionResult, IChannelSelectionAdapter } from '../../../domain/interfaces/IChannelSelectionAdapter';
 import { Scheduler } from '../../../domain/interfaces/IScheduler';
 import { canonicalizeMacAddress, isValidMacAddress } from '../../../domain/utils/macValidator';
@@ -125,25 +126,27 @@ export class LGWebOSAdapter
   // ---- lifecycle ----
 
   async connect(device: TVDevice): Promise<void> {
+    const started = connectionClock();
     if (device.protocol !== TVProtocol.LGWebOSSSAP || device.platform !== TVPlatform.WebOS) {
       throw new TVUnsupportedOperationError('connect', 'device is not an LG webOS TV');
     }
     if (!HOST_PATTERN.test(device.ipAddress)) {
       throw new TVConnectionError('Invalid TV address');
     }
-    await this.teardown();
     const attempt = ++this.attempt;
+    await this.teardown();
+    this.assertCurrent(attempt);
     this.host = device.ipAddress;
     this.setState(TVConnectionState.Connecting);
 
     try {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`[SmartRemote][Connect] Stage 1/5: Opening SSAP transport connection to ${device.ipAddress}...`);
+      const client = await timeConnectionStage('ssap-socket', () => this.openFirstReachable(device.ipAddress, attempt));
+      if (attempt !== this.attempt) {
+        client.close();
+        this.assertCurrent(attempt);
       }
-      const client = await this.openFirstReachable(device.ipAddress, attempt);
       this.client = client;
       client.onClose(error => this.handleConnectionLost(client, error));
-      this.assertCurrent(attempt);
 
       if (!client.isOpen()) {
         const closeError = client.getLastCloseError();
@@ -157,20 +160,13 @@ export class LGWebOSAdapter
       }
 
       // Stage 2: Verify native certificate trust & detect changes if secure TLS was used
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`[SmartRemote][Connect] Stage 2/5: Verifying TLS certificate trust for ${device.ipAddress}...`);
-      }
+      const tlsStarted = connectionClock();
       const lastTLS = await client.getTLSStatus() ?? await this.trustManager.getLastStatus();
       if (lastTLS) {
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(
-            `[SmartRemote][Connect] TLS Status for ${device.ipAddress}: success=${lastTLS.validationSuccess}, leaf='${lastTLS.leafSummary}', fp='${lastTLS.leafFingerprint?.slice(0, 12)}...', err=${lastTLS.errorDomain}:${lastTLS.errorCode} (${lastTLS.errorDescription})`,
-          );
-        }
         if (!lastTLS.validationSuccess && (lastTLS.errorCode !== 0 || lastTLS.errorDescription)) {
           throw new TVConnectionError(
             `TLS certificate validation failed for ${device.ipAddress}: ${lastTLS.errorDescription || 'Untrusted certificate'} [${lastTLS.errorDomain || 'Security'} code ${lastTLS.errorCode}]`,
-            'connection_failed',
+            'tls_trust_failure',
           );
         }
         if (lastTLS.leafFingerprint) {
@@ -178,11 +174,13 @@ export class LGWebOSAdapter
           if (trustResult.certificateChanged) {
             throw new TVConnectionError(
               `The TV security certificate at ${device.ipAddress} has changed (new fingerprint: ${trustResult.fingerprint.slice(0, 12)}...). Connection blocked for security.`,
-              'connection_failed',
+              'tls_trust_failure',
             );
           }
         }
       }
+      this.assertCurrent(attempt);
+      connectionTiming('tls-trust', tlsStarted);
 
       // Stage 3: SSAP Registration / Pairing
       if (!client.isOpen()) {
@@ -195,14 +193,11 @@ export class LGWebOSAdapter
           )
         );
       }
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`[SmartRemote][Connect] Stage 3/5: Registering/pairing with TV at ${device.ipAddress}...`);
-      }
-      await this.pairing().register(client, device.id, {
+      await timeConnectionStage('ssap-registration', () => this.pairing().register(client, device.id, {
         onPrompt: () => {
           if (attempt === this.attempt) this.setState(TVConnectionState.Pairing);
         },
-      });
+      }));
       this.assertCurrent(attempt);
 
       // Stage 4: Service Discovery and Pointer Initialization
@@ -216,35 +211,26 @@ export class LGWebOSAdapter
           )
         );
       }
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`[SmartRemote][Connect] Stage 4/5: Fetching services and pointer support for ${device.ipAddress}...`);
-      }
-      const services = await this.fetchServices(client);
+      // These authenticated requests are independent and SSAP correlates them by ID.
+      const [services, networkMac, pointerAvailable] = await Promise.all([
+        timeConnectionStage('service-list', () => this.fetchServices(client)),
+        timeConnectionStage('network-mac', () => this.fetchNetworkMac(client, device.ipAddress)),
+        timeConnectionStage('pointer-ready', () => this.tryOpenPointer(client)),
+      ]);
       this.assertCurrent(attempt);
-      const networkMac = await this.fetchNetworkMac(client, device.ipAddress);
-      this.assertCurrent(attempt);
-      if (networkMac) {
-        this.discoveredMac = networkMac;
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(`[SmartRemote][Connect] Discovered verified TV MAC address: ${networkMac}`);
-        }
-      }
-      const pointerAvailable = await this.tryOpenPointer(client);
-      this.assertCurrent(attempt);
+      if (!client.isOpen()) throw client.getLastCloseError() ?? new TVConnectionError('TV disconnected during initialization');
+      if (networkMac) this.discoveredMac = networkMac;
 
-      // Stage 5: Connected & Ready
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`[SmartRemote][Connect] Stage 5/5: Connected successfully to ${device.name} (${device.ipAddress})`);
-      }
       this.capabilities = deriveCapabilities(services, pointerAvailable);
       this.connectedTimestamp = Date.now();
       this.setState(TVConnectionState.Connected);
+      connectionTiming('adapter-ready', started);
       this.startHeartbeat(attempt);
     } catch (e) {
       const cancelled = attempt !== this.attempt;
       if (!cancelled) {
         await this.teardown();
-        this.setState(TVConnectionState.Error, e as Error);
+        if (attempt === this.attempt) this.setState(TVConnectionState.Error, e as Error);
       }
       throw e;
     }
@@ -505,13 +491,7 @@ export class LGWebOSAdapter
       const targetUrl = `${endpoint.scheme}://${host}:${endpoint.port}`;
       const client = this.newClient();
       try {
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(`[SmartRemote][LGWebOSAdapter] Attempting connection to ${targetUrl}`);
-        }
         await client.open(targetUrl);
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(`[SmartRemote][LGWebOSAdapter] Successfully connected to ${targetUrl}`);
-        }
         return client;
       } catch (e) {
         lastError = e;
@@ -524,9 +504,6 @@ export class LGWebOSAdapter
           }
         }
         failures.push(`${endpoint.scheme}:${endpoint.port} (${detail})`);
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.log(`[SmartRemote][LGWebOSAdapter] Endpoint ${targetUrl} failed: ${detail}`);
-        }
       }
     }
 
@@ -616,7 +593,11 @@ export class LGWebOSAdapter
       prevPointer.close();
     }
 
+    const attempt = this.attempt;
+    const host = this.host;
     const payload = await client.request(SSAP_URI.pointerSocket);
+    this.assertCurrent(attempt);
+    if (client !== this.client) throw new TVConnectionError('Pointer opening cancelled', 'cancelled');
     const path = payload.socketPath;
     if (typeof path !== 'string') {
       throw new TVConnectionError('TV did not return a pointer socket');
@@ -638,8 +619,16 @@ export class LGWebOSAdapter
       }
     });
 
-    await pointer.connect(path, this.host);
     this.pointer = pointer;
+    try {
+      await pointer.connect(path, host);
+      this.assertCurrent(attempt);
+      if (client !== this.client) throw new TVConnectionError('Pointer opening cancelled', 'cancelled');
+    } catch (error) {
+      pointer.close();
+      if (this.pointer === pointer) this.pointer = null;
+      throw error;
+    }
     return pointer;
   }
 
@@ -660,11 +649,11 @@ export class LGWebOSAdapter
     if (!this.pointerOpening) {
       this.pointerOpening = this.openPointer(client)
         .catch(err => {
-          this.lastPointerFailureTime = Date.now();
+          if (this.client === client) this.lastPointerFailureTime = Date.now();
           throw err;
         })
         .finally(() => {
-          this.pointerOpening = null;
+          if (this.client === client) this.pointerOpening = null;
         });
     }
     return this.pointerOpening;
@@ -872,8 +861,7 @@ export class LGWebOSAdapter
       this.consecutiveHeartbeatFailures += 1;
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.warn(
-          `[SmartRemote][Heartbeat] Ping failure (${this.consecutiveHeartbeatFailures}/${MAX_CONSECUTIVE_HEARTBEAT_FAILURES}):`,
-          e,
+          `[SmartRemote][Heartbeat] Ping failure (${this.consecutiveHeartbeatFailures}/${MAX_CONSECUTIVE_HEARTBEAT_FAILURES})`,
         );
       }
       if (this.consecutiveHeartbeatFailures >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES) {
@@ -882,12 +870,13 @@ export class LGWebOSAdapter
             `[SmartRemote][Heartbeat] TV missed ${this.consecutiveHeartbeatFailures} consecutive heartbeats; triggering disconnect`,
           );
         }
+        connectionTiming('heartbeat-disconnect', connectionClock(), 'threshold');
         this.stopHeartbeat();
         client.close();
         return;
       }
     } finally {
-      this.heartbeatInFlight = false;
+      if (attempt === this.attempt && this.client === client) this.heartbeatInFlight = false;
       if (
         attempt === this.attempt &&
         !this.isHeartbeatPaused &&
@@ -944,7 +933,7 @@ export class LGWebOSAdapter
       this.state === TVConnectionState.Pairing
     ) {
       if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log(`[SmartRemote][Connect] Socket closed during connect/pairing: ${error.message}`);
+        console.log('[SmartRemote][Connect] Socket closed during registration');
       }
     }
   }

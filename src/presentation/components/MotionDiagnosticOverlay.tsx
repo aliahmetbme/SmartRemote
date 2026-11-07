@@ -16,7 +16,7 @@ export const MotionDiagnosticOverlay: React.FC<MotionDiagnosticOverlayProps> = R
 
     return (
       <View style={styles.diagCard} testID="motion-diag-card">
-        <Text style={styles.diagTitle}>LIVE AXIS DIAGNOSTICS (ACC & SMOOTH OFF)</Text>
+        <Text style={styles.diagTitle}>AXIS DIAGNOSTICS (ACC & SMOOTH OFF)</Text>
         <Text style={styles.diagRow}>
           Gyro: X={data.gyro.x.toFixed(2)} Y={data.gyro.y.toFixed(2)} Z={data.gyro.z.toFixed(2)} rad/s
         </Text>

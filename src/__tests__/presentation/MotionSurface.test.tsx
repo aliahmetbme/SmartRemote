@@ -2,6 +2,7 @@ import React from 'react';
 import { AppState } from 'react-native';
 import ReactTestRenderer, { act } from 'react-test-renderer';
 import { Provider } from 'react-redux';
+import { MotionSettings } from '../../presentation/components/MotionSettings';
 import { MotionSurface } from '../../presentation/components/MotionSurface';
 import { ContainerProvider } from '../../presentation/context/ContainerContext';
 import { createContainer } from '../../di/container';
@@ -95,11 +96,12 @@ describe('MotionSurface Component', () => {
       ),
     );
 
-    const render = (props?: { onActiveChange?: (isActive: boolean) => void }) => {
+    const render = (props?: { onActiveChange?: (isActive: boolean) => void }, settings = false) => {
       const r = ReactTestRenderer.create(
         <Provider store={container.store}>
           <ContainerProvider container={container}>
             <MotionSurface {...props} />
+            {settings && <><MotionSettings section="preferences" /><MotionSettings section="developer" /></>}
           </ContainerProvider>
         </Provider>,
       );
@@ -233,7 +235,7 @@ describe('MotionSurface Component', () => {
 
     let renderer: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = render();
+      renderer = render(undefined, true);
     });
 
     const plusBtn = renderer!.root.findByProps({ testID: 'motion-sensitivity-plus' });
@@ -260,7 +262,7 @@ describe('MotionSurface Component', () => {
 
     let renderer: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = render();
+      renderer = render(undefined, true);
     });
 
     const toggleX = renderer!.root.findByProps({ testID: 'motion-invert-x-toggle' });
@@ -280,7 +282,7 @@ describe('MotionSurface Component', () => {
 
     let renderer: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
-      renderer = render();
+      renderer = render(undefined, true);
     });
 
     const diagToggle = renderer!.root.findByProps({ testID: 'motion-diag-toggle' });

@@ -15,6 +15,7 @@ export interface IWebSocketCloseEvent {
   reason?: string;
   domain?: string;
   errorCode?: number;
+  diagnosticCode?: string;
 }
 
 export interface IWebSocketTransport {
@@ -49,6 +50,7 @@ export interface LGNativeWebSocketEventMap {
   reason?: string;
   domain?: string;
   errorCode?: number;
+  diagnosticCode?: string;
 }
 
 let nextSocketId = 1;
@@ -135,7 +137,7 @@ export class LGNativeWebSocketTransport implements IWebSocketTransport {
                 `[SmartRemote][NativeWS] Error event received for socket #${this.socketId}: ${event.message}`,
               );
             }
-            this.onerror?.({ message: event.message, code: event.code, domain: event.domain });
+            this.onerror?.({ message: event.message, code: event.code, domain: event.domain, diagnosticCode: event.diagnosticCode });
           }
         }),
         this.emitter.addListener('onLGWebSocketClosed', (rawEvent: any) => {
@@ -153,6 +155,7 @@ export class LGNativeWebSocketTransport implements IWebSocketTransport {
               reason: event.reason ?? '',
               domain: event.domain,
               errorCode: event.errorCode,
+              diagnosticCode: event.diagnosticCode,
             });
           }
         }),

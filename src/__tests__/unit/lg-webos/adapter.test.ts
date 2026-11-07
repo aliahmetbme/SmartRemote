@@ -45,6 +45,35 @@ describe('LGWebOSAdapter connection', () => {
     });
   });
 
+  it('overlaps metadata and pointer setup after registration while preserving readiness', async () => {
+    jest.useFakeTimers();
+    try {
+      const server = new FakeWebOSServer({
+        silentUris: ['ssap://api/getServiceList', 'ssap://com.webos.service.connectionmanager/getinfo'],
+      });
+      const adapter = new LGWebOSAdapter({
+        credentialStorage: new InMemoryCredentialStorage(),
+        webSocketFactory: server.factory,
+        requestTimeoutMs: 1000,
+      });
+      const started = Date.now();
+      const connection = adapter.connect(device);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(server.requests.map(request => request.uri)).toEqual(expect.arrayContaining([
+        'ssap://api/getServiceList',
+        'ssap://com.webos.service.connectionmanager/getinfo',
+        'ssap://com.webos.service.networkinput/getPointerInputSocket',
+      ]));
+      expect(adapter.getConnectionState()).not.toBe(S.Connected);
+      await jest.advanceTimersByTimeAsync(1500);
+      await connection;
+      expect(Date.now() - started).toBe(1500);
+      await adapter.volumeUp();
+      expect(server.requests[server.requests.length - 1]?.uri).toBe('ssap://audio/volumeUp');
+      await adapter.disconnect();
+    } finally { jest.useRealTimers(); }
+  });
+
   it('skips the pairing state when a key is already stored', async () => {
     const storage = new InMemoryCredentialStorage();
     await storage.set(device.id, 'client-key-123');
