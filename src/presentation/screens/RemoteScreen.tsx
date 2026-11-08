@@ -31,12 +31,14 @@ import { InputShortcutList } from '../components/InputShortcutList';
 import { theme, usePresentationLayout, getRemoteGeometry, getRemoteCardLayout, useRemoteDensity, layoutTokens } from '../theme';
 
 interface RemoteScreenProps {
+  initialMode?: RemoteMode;
   isFocused?: boolean;
   onNavigateToDiscovery?: () => void;
   onNavigateToSettings?: () => void;
 }
 
 export const RemoteScreen: React.FC<RemoteScreenProps> = ({
+  initialMode = 'buttons',
   isFocused = true,
   onNavigateToDiscovery,
   onNavigateToSettings,
@@ -58,7 +60,7 @@ export const RemoteScreen: React.FC<RemoteScreenProps> = ({
   const selectedDevice = useAppSelector(selectSelectedDevice);
   const capabilities = useAppSelector(selectCapabilities);
 
-  const [activeTab, setActiveTab] = useState<RemoteMode>('buttons');
+  const [activeTab, setActiveTab] = useState<RemoteMode>(initialMode);
   const [isPointerActive, setIsPointerActive] = useState<boolean>(false);
   const [launchingAppId, setLaunchingAppId] = useState<string | null>(null);
   const [isWaking, setIsWaking] = useState<boolean>(false);

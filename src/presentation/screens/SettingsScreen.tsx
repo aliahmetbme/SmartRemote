@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
@@ -27,9 +26,12 @@ import { isValidMacAddress } from '../../domain/utils/macValidator';
 import { useContainer } from '../context/ContainerContext';
 import { theme, usePresentationLayout, platformPresentation } from '../theme';
 
-export const SettingsScreen: React.FC = () => {
+export const SettingsScreen: React.FC<{
+  onNavigateToDeveloper?: () => void;
+  onNavigateToWakeSetup?: (deviceId: string) => void;
+}> = ({ onNavigateToDeveloper, onNavigateToWakeSetup }) => {
   const container = useContainer();
-  const [developerOpen, setDeveloperOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const dispatch = useAppDispatch();
   const insets = useSafeAreaInsets();
   const layout = usePresentationLayout(insets.left + insets.right);
@@ -37,24 +39,16 @@ export const SettingsScreen: React.FC = () => {
   const savedDevices = useAppSelector(selectSavedDevices);
   const activeDeviceId = useAppSelector(selectSelectedDeviceId);
   const connectionStatus = useAppSelector(selectConnectionStatus);
-  const diagnostic = useAppSelector(state => state.connection.diagnostic);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isEditingMac, setIsEditingMac] = useState<boolean>(false);
-  const [macInput, setMacInput] = useState<string>('');
-  const [isTestingWake, setIsTestingWake] = useState<boolean>(false);
   const selectedDevice = useAppSelector(selectSelectedDevice);
-  const activeDevice = selectedDevice ?? (savedDevices.length > 0 ? savedDevices[0] : null);
-
-  useEffect(() => {
-    if (activeDevice?.macAddress) {
-      setMacInput(activeDevice.macAddress);
-    }
-  }, [activeDevice?.macAddress]);
+  const activeDevice = selectedDevice;
 
   if (typeof __DEV__ !== 'undefined' && __DEV__) {
     console.log(
-      `[SmartRemote][SettingsScreen] Active TV='${activeDevice?.name ?? 'none'}', status='${connectionStatus}', savedCount=${savedDevices.length}`,
+      `[SmartRemote][SettingsScreen] Active TV='${
+        activeDevice?.name ?? 'none'
+      }', status='${connectionStatus}', savedCount=${savedDevices.length}`,
     );
   }
 
@@ -81,7 +75,12 @@ export const SettingsScreen: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [activeDeviceId, container.useCases.hydrateDevices, dispatch, savedDevices.length]);
+  }, [
+    activeDeviceId,
+    container.useCases.hydrateDevices,
+    dispatch,
+    savedDevices.length,
+  ]);
 
   const handleForgetDevice = (deviceId: string, deviceName: string) => {
     Alert.alert(
@@ -97,7 +96,8 @@ export const SettingsScreen: React.FC = () => {
               await container.useCases.forgetTV.execute(deviceId);
               dispatch(tvActions.deviceForgotten(deviceId));
             } catch (err: unknown) {
-              const msg = err instanceof Error ? err.message : 'Could not forget device';
+              const msg =
+                err instanceof Error ? err.message : 'Could not forget device';
               Alert.alert('Error', msg);
             }
           },
@@ -111,7 +111,9 @@ export const SettingsScreen: React.FC = () => {
       await container.useCases.connectTV.execute(device);
     } catch (err: unknown) {
       if ((err as { code?: unknown })?.code === 'cancelled') return;
-      const guidance = connectionGuidance(classifyConnectionFailure(err).category);
+      const guidance = connectionGuidance(
+        classifyConnectionFailure(err).category,
+      );
       Alert.alert(guidance.title, guidance.message);
     }
   };
@@ -129,383 +131,332 @@ export const SettingsScreen: React.FC = () => {
       await container.useCases.reconnectTV.execute();
     } catch (err: unknown) {
       if ((err as { code?: unknown })?.code === 'cancelled') return;
-      const guidance = connectionGuidance(classifyConnectionFailure(err).category);
+      const guidance = connectionGuidance(
+        classifyConnectionFailure(err).category,
+      );
       Alert.alert(guidance.title, guidance.message);
     }
   };
 
-  const handleSaveMac = async () => {
-    if (!activeDevice) return;
-    const trimmed = macInput.trim();
-    if (!isValidMacAddress(trimmed)) {
-      Alert.alert(
-        'Invalid MAC Address',
-        'Please enter a valid 12-digit hexadecimal MAC address (e.g. AA:BB:CC:DD:EE:FF or AA-BB-CC-DD-EE-FF).',
-      );
-      return;
-    }
-    try {
-      const updated = await container.useCases.updateTVMac.execute(activeDevice.id, trimmed);
-      dispatch(tvActions.deviceSaved(updated));
-      setIsEditingMac(false);
-      Alert.alert('MAC Address Saved', `Updated MAC address for "${updated.name}" to ${updated.macAddress}.`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to update MAC address';
-      Alert.alert('Error', msg);
-    }
-  };
-
-  const handleTestWake = async () => {
-    if (!activeDevice) return;
-    if (!activeDevice.macAddress) {
-      Alert.alert('MAC Required', 'Please configure and save a MAC address for this TV first.');
-      return;
-    }
-    setIsTestingWake(true);
-    try {
-      const result = await container.useCases.wakeTV.execute(activeDevice, {
-        wakeTimeoutMs: 15000,
-        probeIntervalMs: 1500,
-      });
-      if (result.success) {
-        Alert.alert('Wake Successful', `TV responded and connected successfully! Sent ${result.packetsSent} packet(s).`);
-      } else {
-        Alert.alert(
-          'Wake-on-LAN Sent',
-          `Magic packet transmitted (${result.packetsSent} packets sent to ${result.destinations.join(', ')}).\n\nIf the TV did not power on, verify that "TV On With Mobile" or "Turn On via Wi-Fi" is enabled in your TV's settings.`,
-        );
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Wake-on-LAN test failed';
-      Alert.alert('Test Wake Failed', msg);
-    } finally {
-      setIsTestingWake(false);
-    }
-  };
-
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]} >
-    <ScrollView
-      style={styles.container}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode={platformPresentation.keyboardDismissMode}
-      automaticallyAdjustKeyboardInsets
-      contentInsetAdjustmentBehavior="never"
-      contentContainerStyle={[styles.contentContainer, {
-        paddingTop: Math.max(0, 16 - insets.top),
-        paddingLeft: layout.pagePadding + insets.left,
-        paddingRight: layout.pagePadding + insets.right,
-      }]}
-      testID="settings-screen"
-    >
-      <Text style={styles.screenTitle}>Settings</Text>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <ScrollView
+        style={styles.container}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={platformPresentation.keyboardDismissMode}
+        automaticallyAdjustKeyboardInsets
+        contentInsetAdjustmentBehavior="never"
+        contentContainerStyle={[
+          styles.contentContainer,
+          {
+            paddingTop: Math.max(0, 16 - insets.top),
+            paddingLeft: layout.pagePadding + insets.left,
+            paddingRight: layout.pagePadding + insets.right,
+          },
+        ]}
+        testID="settings-screen"
+      >
+        <Text style={styles.screenTitle}>Settings</Text>
 
-      {/* Active TV Connection Status Card */}
-      <View style={styles.card}>
-        <Text style={styles.cardHeader}>TV Management · Selected TV</Text>
-        {activeDevice ? (
-          <View style={styles.infoBlock}>
-            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-              <Text style={styles.infoLabel}>TV Name:</Text>
-              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.name}</Text>
-            </View>
-            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-              <Text style={styles.infoLabel}>IP Address:</Text>
-              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.ipAddress}</Text>
-            </View>
-            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-              <Text style={styles.infoLabel}>Status:</Text>
-              <Text
-                style={[
-                  styles.infoValue, layout.stackDetails && styles.infoValueStacked,
-                  {
-                    color:
-                      connectionStatus === TVConnectionState.Connected
-                        ? theme.colors.connected
-                        : connectionStatus === TVConnectionState.Error
-                        ? theme.colors.error
-                        : theme.colors.connecting,
-                  },
-                ]}
-              >
-                {connectionStatus}
+        {/* Active TV Connection Status Card */}
+        <View style={styles.card}>
+          <Text style={styles.cardHeader}>Selected TV</Text>
+          {activeDevice ? (
+            <View style={styles.infoBlock}>
+              <Text style={styles.selectedName}>{activeDevice.name}</Text>
+              <Text style={styles.selectedStatus}>
+                {connectionStatus === TVConnectionState.Connected
+                  ? 'Connected'
+                  : connectionStatus === TVConnectionState.Reconnecting
+                  ? 'Reconnecting…'
+                  : connectionStatus === TVConnectionState.Connecting
+                  ? 'Connecting…'
+                  : connectionStatus === TVConnectionState.Pairing
+                  ? 'Pairing…'
+                  : 'Disconnected'}
               </Text>
-            </View>
-
-            {connectionStatus === TVConnectionState.Connected ? (
-              <TouchableOpacity
-                accessibilityRole="button"
-                style={styles.disconnectButton}
-                onPress={handleDisconnect}
-                testID="settings-disconnect-btn"
-              >
-                <Text style={styles.disconnectButtonText}>Disconnect Current TV</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                accessibilityRole="button"
-                style={styles.reconnectButton}
-                onPress={handleReconnect}
-                testID="settings-reconnect-btn"
-              >
-                <Text style={styles.reconnectButtonText}>Reconnect to TV</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
-          <Text style={styles.emptyText}>No TV currently active or connected.</Text>
-        )}
-      </View>
-
-      {/* Saved Devices Management */}
-      <View style={styles.card}>
-        <Text style={styles.cardHeader}>Saved TVs ({savedDevices.length})</Text>
-        {isLoading ? (
-          <Text style={styles.emptyText}>Loading saved devices...</Text>
-        ) : savedDevices.length === 0 ? (
-          <Text style={styles.emptyText}>No saved TVs. Connect to a TV to save it for quick access.</Text>
-        ) : (
-          savedDevices.map(device => {
-            const isDeviceActive = device.id === activeDeviceId;
-            const isDeviceConnected =
-              isDeviceActive && connectionStatus === TVConnectionState.Connected;
-            const isDeviceConnecting =
-              isDeviceActive &&
-              (connectionStatus === TVConnectionState.Connecting ||
-                connectionStatus === TVConnectionState.Reconnecting ||
-                connectionStatus === TVConnectionState.Pairing);
-
-            return (
-              <View style={[styles.savedItemRow, layout.stackDetails && styles.savedItemStacked]} key={device.id} testID={`saved-device-${device.id}`}>
-                <View style={styles.savedItemInfo}>
-                  <View style={styles.savedItemHeaderRow}>
-                    <View
-                      style={[
-                        styles.deviceStatusDot,
-                        isDeviceConnected
-                          ? styles.statusDotConnected
-                          : isDeviceConnecting
-                          ? styles.statusDotConnecting
-                          : styles.statusDotOffline,
-                      ]}
-                    />
-                    <Text style={styles.savedItemName}>{device.name}</Text>
-                  </View>
-                  <Text style={styles.savedItemSub}>
-                    {device.ipAddress}
-                    {device.macAddress ? ` • MAC: ${device.macAddress}` : ''} •{' '}
-                    {isDeviceConnected
-                      ? 'Connected'
-                      : isDeviceConnecting
-                      ? 'Connecting...'
-                      : 'Offline'}
-                  </Text>
-                </View>
-
-                <View style={styles.savedItemActions}>
-                  {!isDeviceConnected && (
-                    <TouchableOpacity
-                      accessibilityRole="button"
-                      style={styles.selectDeviceButton}
-                      onPress={() => handleConnectDevice(device)}
-                      testID={`connect-saved-btn-${device.id}`}
-                    >
-                      <Text style={styles.selectDeviceText}>
-                        {isDeviceConnecting ? 'Connecting...' : 'Connect'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    style={styles.forgetButton}
-                    onPress={() => handleForgetDevice(device.id, device.name)}
-                    testID={`forget-btn-${device.id}`}
-                  >
-                    <Text style={styles.forgetText}>Forget</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          })
-        )}
-      </View>
-
-
-      {/* Wake-on-LAN Configuration Card */}
-      {activeDevice && (
-        <View style={styles.card} testID="settings-wol-card">
-          <Text style={styles.cardHeader}>Connection & Wake</Text>
-          <View style={styles.infoBlock}>
-            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-              <Text style={styles.infoLabel}>TV Target:</Text>
-              <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{activeDevice.name}</Text>
-            </View>
-
-            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-              <Text style={styles.infoLabel}>MAC Address:</Text>
-              <Text
-                style={[
-                  styles.infoValue, layout.stackDetails && styles.infoValueStacked,
-                  !activeDevice.macAddress && styles.infoValueMuted,
-                ]}
-                testID="settings-mac-display"
-              >
-                {activeDevice.macAddress ? activeDevice.macAddress : 'Not configured'}
-              </Text>
-            </View>
-
-            <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-              <Text style={styles.infoLabel}>Wake Capability:</Text>
-              <Text
-                style={[
-                  styles.infoValue, layout.stackDetails && styles.infoValueStacked,
-                  {
-                    color: activeDevice.macAddress ? theme.colors.connected : theme.colors.error,
-                  },
-                ]}
-              >
-                {activeDevice.macAddress ? 'Ready (WoL Enabled)' : 'Requires MAC'}
-              </Text>
-            </View>
-
-            {isEditingMac ? (
-              <View style={styles.macEditContainer}>
-                <Text style={styles.macInputLabel}>Enter TV MAC Address:</Text>
-                <TextInput
-                  style={styles.macTextInput}
-                  value={macInput}
-                  onChangeText={setMacInput}
-                  placeholder="e.g. AA:BB:CC:DD:EE:FF"
-                  placeholderTextColor={theme.colors.textMuted}
-                  autoCapitalize="characters"
-                  autoCorrect={false}
-                  accessibilityLabel="TV MAC address"
-                  testID="settings-mac-input"
-                />
-                <View style={[styles.macEditButtonRow, layout.stackForms && styles.buttonRowStacked]}>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    style={styles.cancelMacButton}
-                    onPress={() => {
-                      setMacInput(activeDevice.macAddress ?? '');
-                      setIsEditingMac(false);
-                    }}
-                    testID="cancel-mac-btn"
-                  >
-                    <Text style={styles.cancelMacText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    style={styles.saveMacButton}
-                    onPress={handleSaveMac}
-                    testID="save-mac-btn"
-                  >
-                    <Text style={styles.saveMacText}>Save MAC</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View style={[styles.wolButtonRow, layout.stackForms && styles.buttonRowStacked]}>
+              {connectionStatus === TVConnectionState.Connected ? (
                 <TouchableOpacity
                   accessibilityRole="button"
-                  style={styles.editMacButton}
-                  onPress={() => {
-                    setMacInput(activeDevice.macAddress ?? '');
-                    setIsEditingMac(true);
-                  }}
-                  testID="edit-mac-btn"
+                  style={styles.disconnectButton}
+                  onPress={handleDisconnect}
+                  testID="settings-disconnect-btn"
                 >
-                  <Text style={styles.editMacButtonText}>
-                    {activeDevice.macAddress ? 'Edit MAC' : 'Configure MAC'}
-                  </Text>
+                  <Text style={styles.disconnectButtonText}>Disconnect</Text>
                 </TouchableOpacity>
-
-                {Boolean(activeDevice.macAddress) && (
-                  <TouchableOpacity
-                    accessibilityRole="button"
-                    style={[styles.testWakeButton, isTestingWake && styles.controlDisabled]}
-                    disabled={isTestingWake}
-                    onPress={handleTestWake}
-                    testID="test-wake-btn"
-                  >
-                    <Text style={styles.testWakeButtonText}>
-                      {isTestingWake ? 'Sending WoL...' : 'Test Wake'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
+              ) : (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={styles.reconnectButton}
+                  onPress={handleReconnect}
+                  testID="settings-reconnect-btn"
+                >
+                  <Text style={styles.reconnectButtonText}>Reconnect</Text>
+                </TouchableOpacity>
+              )}
+              <View style={styles.wakeSummary}>
+                <Text style={styles.infoLabel}>TV Wake</Text>
+                <Text style={styles.selectedStatus}>
+                  {isValidMacAddress(activeDevice.macAddress)
+                    ? 'Configuration saved'
+                    : 'Not configured'}
+                </Text>
               </View>
-            )}
-
-            <Text style={styles.wolNoticeTitle}>LG TV Standby Settings:</Text>
-            <Text style={styles.wolNoticeBody}>
-              To allow SmartRemote to power on your TV from standby:{"\n"}
-              1. On your LG TV, open Settings &gt; General &gt; Devices &gt; External Devices &gt; TV On With Mobile.{"\n"}
-              2. Turn ON &quot;Turn on via Wi-Fi&quot; (or Ethernet if wired).
+              {onNavigateToWakeSetup && (
+                <TouchableOpacity
+                  style={styles.navigationRow}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    isValidMacAddress(activeDevice.macAddress)
+                      ? 'Manage wake settings'
+                      : 'Set up TV wake'
+                  }
+                  accessibilityHint="Opens TV Wake Setup for this television"
+                  testID="tv-wake-setup-link"
+                  onPress={() => onNavigateToWakeSetup(activeDevice.id)}
+                >
+                  <Text style={styles.navigationLabel}>
+                    {isValidMacAddress(activeDevice.macAddress)
+                      ? 'Manage wake settings'
+                      : 'Set up TV wake'}
+                  </Text>
+                  <View style={styles.navigationArrowBadge} accessible={false}>
+                    <Text style={styles.navigationArrow}>›</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.navigationRow}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: detailsOpen }}
+                accessibilityLabel="TV details"
+                testID="tv-details-toggle"
+                onPress={() => setDetailsOpen(!detailsOpen)}
+              >
+                <Text style={styles.navigationLabel}>TV details</Text>
+                <View style={styles.navigationArrowBadge} accessible={false}>
+                  <Text style={styles.navigationArrow}>{detailsOpen ? '⌃' : '›'}</Text>
+                </View>
+              </TouchableOpacity>
+              {detailsOpen && (
+                <View testID="tv-details-section">
+                  <View
+                    style={[
+                      styles.infoRow,
+                      layout.stackDetails && styles.infoRowStacked,
+                    ]}
+                  >
+                    <Text style={styles.infoLabel}>IP address</Text>
+                    <Text
+                      style={[
+                        styles.infoValue,
+                        layout.stackDetails && styles.infoValueStacked,
+                      ]}
+                    >
+                      {activeDevice.ipAddress}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.forgetButton}
+                    accessibilityRole="button"
+                    testID={`forget-btn-${activeDevice.id}`}
+                    onPress={() =>
+                      handleForgetDevice(activeDevice.id, activeDevice.name)
+                    }
+                  >
+                    <Text style={styles.forgetText}>Forget this TV</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          ) : (
+            <Text style={styles.emptyText}>
+              Choose a TV from the TVs tab to get started.
             </Text>
-          </View>
+          )}
         </View>
-      )}
 
-      <View style={styles.card} testID="remote-preferences-section">
-        <Text style={styles.cardHeader}>Remote Preferences</Text>
-        <Text style={styles.infoLabel}>Motion pointer sensitivity</Text>
-        <MotionSettings section="preferences" />
-      </View>
-      <View style={styles.card}>
-        <Text style={styles.cardHeader}>About SmartRemote</Text>
-        <Text style={styles.infoValue}>SmartRemote · {version}</Text>
-      </View>
-      <TouchableOpacity style={styles.reconnectButton} accessibilityRole="button"
-        accessibilityLabel="Developer Settings" accessibilityState={{ expanded: developerOpen }}
-        testID="developer-settings-toggle" onPress={() => setDeveloperOpen(!developerOpen)}>
-        <Text style={styles.reconnectButtonText}>{developerOpen ? 'Close Developer Settings' : 'Developer Settings'}</Text>
-      </TouchableOpacity>
-      {developerOpen && <View testID="developer-settings-section">
-        <Text style={styles.cardHeader}>Developer Settings</Text>
-        <MotionSettings section="developer" />
+        {/* Saved Devices Management */}
         <View style={styles.card}>
-          <Text style={styles.cardHeader}>Connection details</Text>
-          <Text style={styles.infoLabel}>State: {connectionStatus}</Text>
-          {activeDevice && <Text style={styles.infoLabel}>Protocol: {activeDevice.protocol}</Text>}
-          <Text style={styles.infoLabel}>Selected TV identity: {activeDevice?.id ?? 'Unavailable'}</Text>
-          <Text style={styles.infoLabel}>Failure: {diagnostic?.category ?? 'Unavailable'}</Text>
-          <Text style={styles.infoLabel}>Evidence: {diagnostic?.evidence ?? 'Unavailable'}</Text>
-          <Text style={styles.infoLabel}>Confidence: {diagnostic?.confidence ?? 'Unavailable'}</Text>
-          <Text style={styles.infoLabel}>Last failure: {diagnostic ? new Date(diagnostic.failedAt).toISOString() : 'Unavailable'}</Text>
-          <Text style={styles.infoLabel}>Transport code: {diagnostic?.transportCode ?? 'Unavailable'}</Text>
-          <Text style={styles.infoLabel}>Retry attempt: {diagnostic?.retryAttempt ?? 'Unavailable'}</Text>
-          <Text style={styles.infoLabel}>Wi-Fi available: {diagnostic?.network.wifi == null ? 'Unavailable' : String(diagnostic.network.wifi)}</Text>
-          <Text style={styles.infoLabel}>Local network permission: Unavailable</Text>
-
-        </View>
-      {/* Network & Platform Diagnostics */}
-      <View style={styles.card}>
-        <Text style={styles.cardHeader}>Platform & Network Architecture</Text>
-        <View style={styles.infoBlock}>
-          <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-            <Text style={styles.infoLabel}>Platform:</Text>
-            <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>{Platform.OS.toUpperCase()}</Text>
-          </View>
-          <View style={[styles.infoRow, layout.stackDetails && styles.infoRowStacked]}>
-            <Text style={styles.infoLabel}>Storage:</Text>
-            <Text style={[styles.infoValue, layout.stackDetails && styles.infoValueStacked]}>Keychain (Secure) + AsyncStorage</Text>
-          </View>
-
-          <Text style={styles.diagNoticeTitle}>Local Network Privacy & Multicast</Text>
-          <Text style={styles.diagNoticeBody}>
-            {Platform.OS === 'ios'
-              ? 'On iOS 14+, automatic UDP multicast discovery (SSDP) requires the restricted Apple entitlement com.apple.developer.networking.multicast. SmartRemote offers manual IP entry as an alternative without requiring restricted entitlements.'
-              : 'Android supports SSDP multicast discovery using Android WifiManager.MulticastLock alongside manual IP direct connection.'}
+          <Text style={styles.cardHeader}>
+            {activeDevice ? 'Other saved TVs' : 'Saved TVs'}
           </Text>
+          {isLoading ? (
+            <Text style={styles.emptyText}>Loading saved devices...</Text>
+          ) : savedDevices.length === 0 ? (
+            <Text style={styles.emptyText}>
+              No saved TVs. Connect to a TV to save it for quick access.
+            </Text>
+          ) : savedDevices.every(device => device.id === activeDevice?.id) ? (
+            <Text style={styles.emptyText}>Your selected TV is saved.</Text>
+          ) : (
+            savedDevices
+              .filter(device => device.id !== activeDevice?.id)
+              .map(device => {
+                const isDeviceActive = device.id === activeDeviceId;
+                const isDeviceConnected =
+                  isDeviceActive &&
+                  connectionStatus === TVConnectionState.Connected;
+                const isDeviceConnecting =
+                  isDeviceActive &&
+                  (connectionStatus === TVConnectionState.Connecting ||
+                    connectionStatus === TVConnectionState.Reconnecting ||
+                    connectionStatus === TVConnectionState.Pairing);
+
+                return (
+                  <View
+                    style={[
+                      styles.savedItemRow,
+                      layout.stackDetails && styles.savedItemStacked,
+                    ]}
+                    key={device.id}
+                    testID={`saved-device-${device.id}`}
+                  >
+                    <View style={styles.savedItemInfo}>
+                      <View style={styles.savedItemHeaderRow}>
+                        <View
+                          style={[
+                            styles.deviceStatusDot,
+                            isDeviceConnected
+                              ? styles.statusDotConnected
+                              : isDeviceConnecting
+                              ? styles.statusDotConnecting
+                              : styles.statusDotOffline,
+                          ]}
+                        />
+                        <Text style={styles.savedItemName}>{device.name}</Text>
+                      </View>
+                      <Text style={styles.savedItemSub}>
+                        {isDeviceConnected
+                          ? 'Connected'
+                          : isDeviceConnecting
+                          ? 'Connecting...'
+                          : 'Offline'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.savedItemActions}>
+                      {!isDeviceConnected && (
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          style={styles.selectDeviceButton}
+                          onPress={() => handleConnectDevice(device)}
+                          testID={`connect-saved-btn-${device.id}`}
+                        >
+                          <Text style={styles.selectDeviceText}>
+                            {isDeviceConnecting ? 'Connecting...' : 'Connect'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        style={styles.forgetButton}
+                        onPress={() =>
+                          handleForgetDevice(device.id, device.name)
+                        }
+                        testID={`forget-btn-${device.id}`}
+                      >
+                        <Text style={styles.forgetText}>Forget</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })
+          )}
         </View>
-      </View>
-      </View>}
-    </ScrollView>
+
+        <View style={styles.card} testID="remote-preferences-section">
+          <Text style={styles.cardHeader}>Remote Preferences</Text>
+          <MotionSettings section="preferences" />
+        </View>
+        {onNavigateToDeveloper && (
+          <TouchableOpacity
+            style={styles.navigationRow}
+            accessibilityRole="button"
+            accessibilityLabel="Developer Settings"
+            accessibilityHint="Opens advanced pointer and connection settings"
+            testID="developer-settings-toggle"
+            onPress={onNavigateToDeveloper}
+          >
+            <Text style={styles.navigationLabel}>Developer Settings</Text>
+            <View style={styles.navigationArrowBadge} accessible={false}>
+              <Text style={styles.navigationArrow}>›</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+        <View style={styles.aboutRow}>
+          <Text style={styles.infoLabel}>About SmartRemote</Text>
+          <Text style={styles.aboutVersion}>{version}</Text>
+        </View>
+      </ScrollView>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  aboutRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 48,
+    paddingVertical: 8,
+  },
+  aboutVersion: { color: theme.colors.textSecondary, fontSize: 14 },
+  selectedName: {
+    ...theme.typography.subtitle,
+    color: theme.colors.textPrimary,
+    marginBottom: 4,
+  },
+  selectedStatus: { color: theme.colors.textSecondary, fontSize: 14 },
+  wakeSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  helpButton: {
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navigationLabel: {
+    flex: 1,
+    color: theme.colors.secondary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  navigationArrowBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0, 210, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navigationArrow: {
+    color: theme.colors.secondary,
+    fontSize: 28,
+    lineHeight: 32,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  navigationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    minHeight: 56,
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 210, 255, 0.22)',
+    backgroundColor: 'rgba(0, 210, 255, 0.04)',
+    marginTop: 8,
+    marginBottom: 8,
+  },
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,

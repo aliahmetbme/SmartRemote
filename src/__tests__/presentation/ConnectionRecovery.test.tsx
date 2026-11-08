@@ -95,7 +95,8 @@ describe('Connection recovery guidance', () => {
   it('offers secure TV Settings guidance rather than validation bypass', () => {
     const guidance = connectionGuidance('TLS_TRUST_FAILURE');
     expect(guidance.action).toBe('TV Settings');
-    expect(guidance.message).toContain('will not bypass');
+    expect(guidance.message).toContain('Settings');
+    expect(guidance.action).not.toMatch(/bypass|disable|trust anyway/i);
   });
   it('does not equate a network failure with TV power or public internet speed', () => {
     const guidance = connectionGuidance('TV_UNREACHABLE');

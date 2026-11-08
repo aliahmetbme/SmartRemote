@@ -223,9 +223,7 @@ describe('Phase 6.1 Regression Hotfix Suite', () => {
         );
       });
 
-      const settingsSavedItem = settingsRenderer!.root.findByProps({
-        testID: `saved-device-${physicalTvDevice.id}`,
-      });
+      const settingsSavedItem = settingsRenderer!.root.findByProps({ children: physicalTvDevice.name });
       expect(settingsSavedItem).toBeDefined();
 
       const reconnectBtn = settingsRenderer!.root.findByProps({

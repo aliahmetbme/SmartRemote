@@ -43,6 +43,8 @@ export const PointerSurface = ({ onActiveChange }: PointerSurfaceProps) => {
           disabled={disabled || pointer.motion.isSensorAvailable !== true}
           accessibilityRole="button"
           accessibilityLabel="Recenter motion pointer."
+          accessibilityHint="Resets the motion reference without selecting anything"
+          activeOpacity={0.65}
           testID="pointer-recenter"
           style={[
             styles.recenter,
@@ -50,7 +52,12 @@ export const PointerSurface = ({ onActiveChange }: PointerSurfaceProps) => {
               styles.disabled,
           ]}
         >
-          <Text style={styles.secondary}>Recenter</Text>
+          <View style={styles.recenterContent}>
+            <View accessible={false} style={styles.target}>
+              <View style={styles.targetDot} />
+            </View>
+            <Text style={styles.secondary}>Recenter</Text>
+          </View>
         </TouchableOpacity>
       </View>
       {(pointer.motion.isSensorAvailable === false || pointer.failed) && (
@@ -82,7 +89,27 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.sm,
     backgroundColor: theme.colors.surfaceHighlight,
   },
+  recenterContent: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  target: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: theme.colors.textSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  targetDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.colors.textSecondary,
+  },
   recenter: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.sm,
+    paddingHorizontal: 14,
     minHeight: 48,
     padding: theme.spacing.sm,
     alignItems: 'center',

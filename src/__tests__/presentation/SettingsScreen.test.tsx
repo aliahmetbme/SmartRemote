@@ -3,6 +3,7 @@ import ReactTestRenderer from 'react-test-renderer';
 import { Provider } from 'react-redux';
 import { Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { DeveloperSettingsScreen } from '../../presentation/screens/DeveloperSettingsScreen';
 import { SettingsScreen } from '../../presentation/screens/SettingsScreen';
 import { ContainerProvider } from '../../presentation/context/ContainerContext';
 import { createContainer } from '../../di/container';
@@ -35,12 +36,13 @@ describe('SettingsScreen Component', () => {
     });
 
     let currentRenderer: ReactTestRenderer.ReactTestRenderer | null = null;
-    const render = () => {
+    const navigateDeveloper = jest.fn();
+    const render = (developer = false) => {
       currentRenderer = ReactTestRenderer.create(
         <SafeAreaProvider initialMetrics={testMetrics}>
           <Provider store={container.store}>
             <ContainerProvider container={container}>
-              <SettingsScreen />
+              {developer ? <DeveloperSettingsScreen /> : <SettingsScreen onNavigateToDeveloper={navigateDeveloper} />}
             </ContainerProvider>
           </Provider>
         </SafeAreaProvider>,
@@ -56,7 +58,7 @@ describe('SettingsScreen Component', () => {
       }
     };
 
-    return { container, mockAdapter, render, cleanup };
+    return { container, mockAdapter, render, cleanup, navigateDeveloper };
   };
 
   it('renders settings screen with empty state when no TV connected', async () => {
@@ -71,7 +73,7 @@ describe('SettingsScreen Component', () => {
     expect(root).toBeDefined();
 
     const emptyText = renderer!.root.findByProps({
-      children: 'No TV currently active or connected.',
+      children: 'Choose a TV from the TVs tab to get started.',
     });
     expect(emptyText).toBeDefined();
 
@@ -126,6 +128,7 @@ describe('SettingsScreen Component', () => {
       renderer = render();
     });
 
+    await ReactTestRenderer.act(async () => { renderer!.root.findByProps({ testID: 'tv-details-toggle' }).props.onPress(); });
     const forgetBtn = renderer!.root.findByProps({ testID: `forget-btn-${dummySaved.id}` });
     await ReactTestRenderer.act(() => {
       forgetBtn.props.onPress();
@@ -149,16 +152,20 @@ describe('SettingsScreen Component', () => {
 
     await cleanup();
   });
-  it('relocates advanced controls behind Developer Settings and retains preferences across remounts without sampling', async () => {
-    const { container, render, cleanup } = createTestEnv();
+  it('navigates to separate Developer Settings and retains relocated sensitivity and inversion without sampling', async () => {
+    const { container, render, cleanup, navigateDeveloper } = createTestEnv();
     const start = jest.spyOn(container.motionSensorService, 'start');
     let tree!: ReactTestRenderer.ReactTestRenderer;
     await ReactTestRenderer.act(async () => { tree = render(); });
+    expect(tree.root.findAllByProps({ testID: 'motion-sensitivity-plus' })).toHaveLength(0);
     expect(tree.root.findAllByProps({ testID: 'motion-invert-x-toggle' })).toHaveLength(0);
-    expect(tree.root.findAllByProps({ testID: 'motion-diag-toggle' })).toHaveLength(0);
-    await ReactTestRenderer.act(async () => { tree.root.findByProps({ testID: 'motion-sensitivity-plus' }).props.onPress(); });
+    expect(tree.root.findAllByProps({ testID: 'developer-settings-screen' })).toHaveLength(0);
     await ReactTestRenderer.act(async () => { tree.root.findByProps({ testID: 'developer-settings-toggle' }).props.onPress(); });
+    expect(navigateDeveloper).toHaveBeenCalledTimes(1);
+    await cleanup();
+    await ReactTestRenderer.act(async () => { tree = render(true); });
     await ReactTestRenderer.act(async () => {
+      tree.root.findByProps({ testID: 'motion-sensitivity-plus' }).props.onPress();
       tree.root.findByProps({ testID: 'motion-invert-x-toggle' }).props.onPress();
       tree.root.findByProps({ testID: 'motion-invert-y-toggle' }).props.onPress();
       tree.root.findByProps({ testID: 'motion-diag-toggle' }).props.onPress();
@@ -166,11 +173,23 @@ describe('SettingsScreen Component', () => {
     expect(container.store.getState().remote.motionPreferences).toEqual({ automaticMotion: true, sensitivity: 1.2, invertX: true, invertY: true, diagnosticMode: true });
     expect(JSON.stringify(tree.toJSON())).not.toMatch(/clientKey|privateKey|pairingToken|TLS bypass/);
     await cleanup();
-    await ReactTestRenderer.act(async () => { tree = render(); });
+    await ReactTestRenderer.act(async () => { tree = render(true); });
     expect(tree.root.findByProps({ testID: 'motion-sensitivity-value' }).props.children.join('')).toBe('1.2x');
-    expect(tree.root.findAllByProps({ testID: 'developer-settings-section' })).toHaveLength(0);
     expect(start).not.toHaveBeenCalled();
     await cleanup();
   });
-
+  it('shows one selected TV name and honest wake configuration, with technical addresses hidden until details', async () => {
+    const { container, render, cleanup } = createTestEnv();
+    container.store.dispatch(tvActions.savedDevicesLoaded([dummySaved]));
+    container.store.dispatch(tvActions.deviceSelected(dummySaved.id));
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => { tree = render(); });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json.split(dummySaved.name)).toHaveLength(2);
+    expect(json).not.toContain(dummySaved.ipAddress);
+    expect(json).not.toMatch(/Wake enabled|Wake supported|WoL Enabled/);
+    await ReactTestRenderer.act(async () => { tree.root.findByProps({ testID: 'tv-details-toggle' }).props.onPress(); });
+    expect(JSON.stringify(tree.toJSON())).toContain(dummySaved.ipAddress);
+    await cleanup();
+  });
 });

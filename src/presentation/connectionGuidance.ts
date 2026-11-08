@@ -3,16 +3,16 @@ export function connectionGuidance(category: FailureCategory) {
   switch (category) {
     case 'NETWORK_UNAVAILABLE':
       return {
-        title: 'Connect to your local network',
+        title: 'Connect to a local network',
         message:
-          'Your phone currently reports no Wi-Fi or Ethernet connection. Check your network settings.',
+          'Your phone needs local network access to communicate with your TV.',
         action: 'Open Settings',
       };
     case 'TLS_TRUST_FAILURE':
       return {
         title: "Secure connection couldn't be verified",
         message:
-          'Check that you selected the correct TV. SmartRemote will not bypass certificate verification. Review TV details before trying again.',
+          'Check that you selected the correct TV, then review its details in Settings.',
         action: 'TV Settings',
       };
     case 'PAIRING_REJECTED':
@@ -26,28 +26,28 @@ export function connectionGuidance(category: FailureCategory) {
       return {
         title: "Pairing didn't complete",
         message:
-          'Check the TV for a connection request. Pairing can also fail if credentials cannot be stored.',
+          'Check your TV for a connection request, then try again.',
         action: 'Pair Again',
       };
     case 'CONNECTION_TIMEOUT':
       return {
-        title: "Can't reach your TV",
+        title: "Can't connect to your TV",
         message:
-          'The connection attempt timed out. Check the TV, its saved address and local network access. A timeout does not establish whether the TV is off.',
+          'Make sure your TV is on and both devices can communicate over the same local network.',
         action: 'Try Again',
       };
     case 'CONNECTION_REFUSED':
       return {
         title: 'TV connection was refused',
         message:
-          'The endpoint refused the connection. Check the selected TV and that remote connections are enabled.',
+          'Check that remote connections are allowed on your TV, then try again.',
         action: 'Try Again',
       };
     default:
       return {
-        title: "Can't reach your TV",
+        title: "Can't connect to your TV",
         message:
-          'The TV may be in standby, or the devices may not be able to communicate on the local network. Check the TV address and local network access.',
+          'Your TV may be in standby; make sure it is on and both devices can communicate over the local network.',
         action: 'Try Again',
       };
   }

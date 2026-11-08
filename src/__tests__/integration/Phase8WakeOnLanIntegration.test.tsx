@@ -6,7 +6,7 @@ import { Alert } from 'react-native';
 import { createContainer } from '../../di/container';
 import { ContainerProvider } from '../../presentation/context/ContainerContext';
 import { RemoteScreen } from '../../presentation/screens/RemoteScreen';
-import { SettingsScreen } from '../../presentation/screens/SettingsScreen';
+import { TVWakeSetupScreen } from '../../presentation/screens/TVWakeSetupScreen';
 import { TVDevice } from '../../domain/entities/TVDevice';
 import { TVBrand } from '../../domain/enums/TVBrand';
 import { TVPlatform } from '../../domain/enums/TVPlatform';
@@ -309,7 +309,7 @@ describe('Phase 8 — Integration: Power Workflow, Settings, & UI Orchestration'
     expect(powerTVSpy).toHaveBeenCalledWith(lgTvWithMac, expect.any(Object));
   });
 
-  it('SettingsScreen: Wake-on-LAN card displays stored MAC, allows editing, and saves canonical MAC', async () => {
+  it('TV Wake Setup: displays stored MAC, allows editing, and saves canonical MAC', async () => {
     const storage = new InMemoryKeyValueStorage();
     const container = createContainer({
       keyValueStorage: storage,
@@ -331,7 +331,7 @@ describe('Phase 8 — Integration: Power Workflow, Settings, & UI Orchestration'
         <Provider store={container.store}>
           <SafeAreaProvider initialMetrics={testMetrics}>
             <ContainerProvider container={container}>
-              <SettingsScreen />
+              <TVWakeSetupScreen deviceId={lgTvWithMac.id} />
             </ContainerProvider>
           </SafeAreaProvider>
         </Provider>,
@@ -363,9 +363,7 @@ describe('Phase 8 — Integration: Power Workflow, Settings, & UI Orchestration'
     // 5. Verify saved in repo with canonical colon format
     const updated = await container.deviceRepository.getById(lgTvWithMac.id);
     expect(updated?.macAddress).toBe('11:22:33:44:55:66');
-    expect(alertSpy).toHaveBeenCalledWith(
-      'MAC Address Saved',
-      expect.stringContaining('11:22:33:44:55:66'),
-    );
+    expect(container.store.getState().tv.savedDevices.find(tv => tv.id === lgTvWithMac.id)?.macAddress).toBe('11:22:33:44:55:66');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Network address saved');
   });
 });

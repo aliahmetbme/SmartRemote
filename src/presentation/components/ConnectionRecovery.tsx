@@ -82,7 +82,17 @@ export const ConnectionRecovery = ({
       accessibilityLiveRegion="polite"
       testID="connection-recovery"
     >
-      <Text style={styles.title}>{guidance.title}</Text>
+      <View style={styles.heading}>
+        <Text style={styles.title}>{guidance.title}</Text>
+        <TouchableOpacity
+          onPress={() => setDismissed(diagnostic.failedAt)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss connection guidance"
+          style={styles.dismiss}
+        >
+          <Text style={styles.dismissText}>×</Text>
+        </TouchableOpacity>
+      </View>
       <Text style={styles.message}>{guidance.message}</Text>
       <View style={styles.actions}>
         {!reconnecting && (
@@ -90,10 +100,10 @@ export const ConnectionRecovery = ({
             onPress={recover}
             disabled={busy}
             accessibilityRole="button"
-            style={styles.button}
+            style={[styles.button, styles.primary]}
             testID="connection-retry"
           >
-            <Text style={styles.link}>
+            <Text style={styles.primaryText}>
               {busy ? 'Please wait…' : guidance.action}
             </Text>
           </TouchableOpacity>
@@ -126,32 +136,54 @@ export const ConnectionRecovery = ({
             <Text style={styles.link}>Wake TV</Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity
-          onPress={() => setDismissed(diagnostic.failedAt)}
-          accessibilityRole="button"
-          accessibilityLabel="Dismiss connection guidance"
-          style={styles.button}
-        >
-          <Text style={styles.link}>Dismiss</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
 };
 const styles = StyleSheet.create({
   card: {
-    padding: theme.spacing.sm,
+    padding: theme.spacing.md,
     marginBottom: theme.spacing.sm,
     backgroundColor: theme.colors.surface,
     borderRadius: theme.borderRadius.sm,
   },
-  title: { color: theme.colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  title: {
+    color: theme.colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+  },
   message: {
     color: theme.colors.textSecondary,
     fontSize: 13,
     marginTop: theme.spacing.xs,
   },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
+  heading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dismiss: {
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dismissText: { color: theme.colors.textMuted, fontSize: 24 },
+  primary: {
+    backgroundColor: theme.colors.surfaceHighlight,
+    paddingHorizontal: 18,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.borderActive,
+  },
+  primaryText: {
+    color: theme.colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  actions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.spacing.md,
+    marginTop: theme.spacing.sm,
+  },
   button: { minHeight: 48, justifyContent: 'center' },
   link: { color: theme.colors.secondary, fontSize: 14 },
 });

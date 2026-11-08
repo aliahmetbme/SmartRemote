@@ -1,3 +1,4 @@
+import { TVWakeSetupScreen } from '../../presentation/screens/TVWakeSetupScreen';
 import React from 'react';
 import * as RN from 'react-native';
 import Renderer, { act } from 'react-test-renderer';
@@ -168,14 +169,18 @@ describe('Responsive width and accessibility budgets (not native screenshot test
   });
   it('allows long Settings values to stack and keeps MAC editing keyboard-aware', async () => {
     const tree = await renderScreen(<SettingsScreen />);
-    await act(async () => tree.root.findByProps({ testID: 'developer-settings-toggle' }).props.onPress());
-    const value = tree.root.findAllByType(RN.Text).find(node => node.props.children === 'Keychain (Secure) + AsyncStorage')!;
-    expect(RN.StyleSheet.flatten(value.parent!.props.style).flexDirection).toBe('column');
+    await act(async () => tree.root.findByProps({ testID: 'tv-details-toggle' }).props.onPress());
+    const label = tree.root.findAllByType(RN.Text).find(node => node.props.children === 'IP address')!;
+    expect(RN.StyleSheet.flatten(label.parent!.props.style).flexDirection).toBe('column');
+    const value = label.parent!.findAllByType(RN.Text)[1];
     expect(RN.StyleSheet.flatten(value.props.style).textAlign).toBe('left');
     expect(tree.root.findByProps({ testID: 'settings-screen' }).props.automaticallyAdjustKeyboardInsets).toBe(true);
-    await act(async () => tree.root.findByProps({ testID: 'edit-mac-btn' }).props.onPress());
-    expect(RN.StyleSheet.flatten(tree.root.findByProps({ testID: 'settings-mac-input' }).props.style).minHeight).toBeGreaterThanOrEqual(48);
     await act(async () => tree.unmount());
+    const wakeTree = await renderScreen(<TVWakeSetupScreen deviceId="webos-1" />);
+    await act(async () => wakeTree.root.findByProps({ testID: 'edit-mac-btn' }).props.onPress());
+    expect(RN.StyleSheet.flatten(wakeTree.root.findByProps({ testID: 'settings-mac-input' }).props.style).minHeight).toBeGreaterThanOrEqual(48);
+    expect(wakeTree.root.findByProps({ testID: 'tv-wake-setup-screen' }).props.automaticallyAdjustKeyboardInsets).toBe(true);
+    await act(async () => wakeTree.unmount());
   });
   it('keeps Discovery input and Connect accessible inside the keyboard-aware scroll list', async () => {
     const tree = await renderScreen(<TVDiscoveryScreen />, TVConnectionState.Disconnected);

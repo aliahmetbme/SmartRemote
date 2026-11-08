@@ -1,5 +1,13 @@
 import React from 'react';
-import { NavigationContainer, DarkTheme, useIsFocused } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  DarkTheme,
+  useIsFocused,
+  type InitialState,
+} from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { TVWakeSetupScreen } from '../screens/TVWakeSetupScreen';
+import { DeveloperSettingsScreen } from '../screens/DeveloperSettingsScreen';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text, View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,16 +17,23 @@ import { SettingsScreen } from '../screens/SettingsScreen';
 import { theme, getTabBarLayout } from '../theme';
 
 export type RootTabParamList = {
-  Remote: undefined;
+  Remote: { initialMode?: 'buttons' | 'pointer' } | undefined;
   Discovery: undefined;
   Settings: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
-const navigationTheme = { ...DarkTheme, colors: { ...DarkTheme.colors,
-  background: theme.colors.background, card: theme.colors.surface,
-  text: theme.colors.textPrimary, border: theme.colors.border, primary: theme.colors.secondary,
-} };
+const navigationTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: theme.colors.background,
+    card: theme.colors.surface,
+    text: theme.colors.textPrimary,
+    border: theme.colors.border,
+    primary: theme.colors.secondary,
+  },
+};
 
 const styles = StyleSheet.create({
   tabLabel: {
@@ -38,7 +53,13 @@ const styles = StyleSheet.create({
   },
 });
 
-const TabBarIcon = ({ label, focused }: { label: string; focused: boolean }) => {
+const TabBarIcon = ({
+  label,
+  focused,
+}: {
+  label: string;
+  focused: boolean;
+}) => {
   let symbol = '📱';
   if (label === 'Remote') symbol = '🎛️';
   if (label === 'Discovery') symbol = '🔍';
@@ -46,7 +67,9 @@ const TabBarIcon = ({ label, focused }: { label: string; focused: boolean }) => 
 
   return (
     <View style={styles.iconContainer}>
-      <Text style={[styles.iconText, focused && styles.iconTextFocused]}>{symbol}</Text>
+      <Text style={[styles.iconText, focused && styles.iconTextFocused]}>
+        {symbol}
+      </Text>
     </View>
   );
 };
@@ -62,27 +85,92 @@ const renderSettingsIcon = ({ focused }: { focused: boolean }) => (
 );
 
 interface RemoteWrapperProps {
+  route?: { params?: { initialMode?: 'buttons' | 'pointer' } };
   navigation: {
     navigate: (screen: keyof RootTabParamList) => void;
   };
 }
 
-const RemoteScreenWrapper: React.FC<RemoteWrapperProps> = ({ navigation }) => {
+const RemoteScreenWrapper: React.FC<RemoteWrapperProps> = ({
+  navigation,
+  route,
+}) => {
   const isFocused = useIsFocused();
   return (
-  <RemoteScreen
-    isFocused={isFocused}
-    onNavigateToDiscovery={() => navigation.navigate('Discovery')}
-    onNavigateToSettings={() => navigation.navigate('Settings')}
+    <RemoteScreen
+      initialMode={route?.params?.initialMode}
+      isFocused={isFocused}
+      onNavigateToDiscovery={() => navigation.navigate('Discovery')}
+      onNavigateToSettings={() => navigation.navigate('Settings')}
+    />
+  );
+};
+
+const SettingsStack = createNativeStackNavigator<{
+  SettingsHome: undefined;
+  DeveloperSettings: undefined;
+  TVWakeSetup: { deviceId: string };
+}>();
+const SettingsHome = ({
+  navigation,
+}: {
+  navigation: {
+    navigate: {
+      (route: 'DeveloperSettings'): void;
+      (route: 'TVWakeSetup', params: { deviceId: string }): void;
+    };
+  };
+}) => (
+  <SettingsScreen
+    onNavigateToDeveloper={() => navigation.navigate('DeveloperSettings')}
+    onNavigateToWakeSetup={deviceId =>
+      navigation.navigate('TVWakeSetup', { deviceId })
+    }
   />
 );
+const WakeSetupRoute = ({
+  route,
+}: {
+  route: { params: { deviceId: string } };
+}) => {
+  const isFocused = useIsFocused();
+  return (
+    <TVWakeSetupScreen deviceId={route.params.deviceId} isFocused={isFocused} />
+  );
 };
+const SettingsNavigator = () => (
+  <SettingsStack.Navigator
+    screenOptions={{
+      headerStyle: { backgroundColor: theme.colors.surface },
+      headerTintColor: theme.colors.textPrimary,
+      contentStyle: { backgroundColor: theme.colors.background },
+    }}
+  >
+    <SettingsStack.Screen
+      name="SettingsHome"
+      component={SettingsHome}
+      options={{ title: 'Settings', headerShown: false }}
+    />
+    <SettingsStack.Screen
+      name="DeveloperSettings"
+      component={DeveloperSettingsScreen}
+      options={{ title: 'Developer Settings' }}
+    />
+    <SettingsStack.Screen
+      name="TVWakeSetup"
+      component={WakeSetupRoute}
+      options={{ title: 'TV Wake Setup' }}
+    />
+  </SettingsStack.Navigator>
+);
 
 const remoteOptions = { tabBarIcon: renderRemoteIcon };
 const discoveryOptions = { title: 'TVs', tabBarIcon: renderDiscoveryIcon };
 const settingsOptions = { tabBarIcon: renderSettingsIcon };
 
-export const AppNavigator: React.FC = () => {
+export const AppNavigator: React.FC<{ initialState?: InitialState }> = ({
+  initialState,
+}) => {
   const insets = useSafeAreaInsets();
   const { fontScale } = useWindowDimensions();
 
@@ -106,11 +194,23 @@ export const AppNavigator: React.FC = () => {
   );
 
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer theme={navigationTheme} initialState={initialState}>
       <Tab.Navigator initialRouteName="Remote" screenOptions={screenOptions}>
-        <Tab.Screen name="Remote" component={RemoteScreenWrapper} options={remoteOptions} />
-        <Tab.Screen name="Discovery" component={TVDiscoveryScreen} options={discoveryOptions} />
-        <Tab.Screen name="Settings" component={SettingsScreen} options={settingsOptions} />
+        <Tab.Screen
+          name="Remote"
+          component={RemoteScreenWrapper}
+          options={remoteOptions}
+        />
+        <Tab.Screen
+          name="Discovery"
+          component={TVDiscoveryScreen}
+          options={discoveryOptions}
+        />
+        <Tab.Screen
+          name="Settings"
+          component={SettingsNavigator}
+          options={settingsOptions}
+        />
       </Tab.Navigator>
     </NavigationContainer>
   );

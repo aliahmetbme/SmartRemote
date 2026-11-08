@@ -1,97 +1,375 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# SmartRemote
 
-# Getting Started
+### Cross-Platform Smart TV Remote Control Application
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+SmartRemote is a cross-platform mobile application developed with **React Native and TypeScript**, integrating native iOS and Android capabilities to control compatible LG webOS televisions over a local network.
 
-## Step 1: Start Metro
+The project combines a Clean Architecture-inspired layered architecture, the Adapter Pattern, native platform integrations, and secure WebSocket transport to separate shared mobile behavior from LG-specific communication.
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+Although the current implementation focuses on LG webOS, the software architecture is designed to support additional television manufacturers through manufacturer-specific adapters.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+---
 
-```sh
-# Using npm
-npm start
+## Application Preview
 
-# OR using Yarn
-yarn start
+<p align="center">
+  <img src="docs/screenshots/ios/ios-remote.png" width="220" alt="SmartRemote remote control screen" />
+  <img src="docs/screenshots/ios/ios-pointer.png" width="220" alt="SmartRemote Hybrid Pointer screen with touchpad fallback" />
+  <img src="docs/screenshots/ios/ios-settings.png" width="220" alt="SmartRemote Settings screen with TV Wake Setup entry" />
+</p>
+
+These iOS simulator captures use development-only demo TVs; Connected status does not demonstrate a physical TV connection. The Pointer capture shows the touchpad fallback with motion unavailable. Android and connection recovery captures are linked in the [screenshot report](docs/PHASE_15_UI_POLISH_AND_SCREENSHOTS.md); the updated Settings and TV Wake Setup captures are documented in the [TV Wake Setup report](docs/PHASE_15_1_TV_WAKE_SETUP.md).
+
+---
+
+## Technology Stack
+
+| Category | Technologies |
+|---|---|
+| Mobile Development | React Native, TypeScript |
+| State Management | Redux Toolkit, React Redux |
+| Navigation | React Navigation |
+| iOS Native Development | Swift, Objective-C, CoreMotion |
+| Android Native Development | Kotlin, SensorManager, OkHttp |
+| Network Communication | WebSocket, WSS, SSAP, UDP, SSDP |
+| Security | TLS, Certificate Validation, Fingerprint Verification |
+| Local Persistence | AsyncStorage, React Native Keychain |
+| Architecture | Clean Architecture-inspired layers, Adapter Pattern, Factory Pattern, Dependency Injection |
+
+React Native is responsible for the shared user interface and application logic, while native implementations are used for platform-specific networking and sensor functionality.
+
+---
+
+## 1. Software Architecture
+
+SmartRemote uses a **Clean Architecture-inspired layered architecture**, separating presentation, application logic, domain abstractions, and infrastructure implementations.
+
+The primary objective is to minimize dependencies between components and isolate manufacturer-specific television protocols from the rest of the application.
+
+### Architecture Overview
+
+```text
+Primary source dependencies (arrows mean "depends on")
+
+  Presentation --------> Application --------> Domain
+       |                                         ^
+       +-----------------------------------------+
+                                                 |
+  Infrastructure --------------------------------+
+                 implements domain contracts
+
+  src/di: composes services and concrete implementations
+  src/store: Redux state, connected through bindings/hooks
 ```
 
-## Step 2: Build and run your app
+### Domain Layer
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+The Domain layer defines the core models and interfaces of the application independently of UI frameworks and television manufacturers.
 
-### Android
+It contains abstractions such as `TVDevice`, `TVCapabilities`, `TVConnectionState`, and `ITVRemoteAdapter`.
 
-```sh
-# Using npm
-npm run android
+These models and interfaces establish shared contracts for television operations without depending on LG-specific communication details.
 
-# OR using Yarn
-yarn android
+### Application Layer
+
+The Application layer coordinates the application's operations through dedicated use cases.
+
+Examples include `ConnectTVUseCase`, `SendRemoteCommandUseCase`, `RestoreLastTVUseCase`, and `DiscoverTVsUseCase`.
+
+The `TVConnectionManager` manages active television connections, session restoration, reconnection attempts, and connection lifecycle transitions.
+
+### Infrastructure Layer
+
+The Infrastructure layer provides concrete implementations of the domain interfaces.
+
+It includes `LGWebOSAdapter`, WebSocket communication, SSDP discovery, secure credential storage, local persistence, and platform-specific native modules.
+
+### Presentation Layer
+
+The Presentation layer consists of React Native screens, reusable components, custom hooks, navigation, and Redux state integration.
+
+Screens and hooks invoke application use cases and connection services without implementing television protocols. `src/store` holds device, connection, and remote preference state; `src/di` constructs dependencies and binds service events to Redux. The composition root also coordinates store bindings and platform selection.
+
+---
+
+## 2. Design Patterns and Multi-Brand Extensibility
+
+One of SmartRemote's core architectural decisions is the use of the **Adapter Pattern**.
+
+Different Smart TV manufacturers may use different communication protocols, authentication mechanisms, and command structures.
+
+Rather than integrating these differences directly into the UI, SmartRemote defines common interfaces for television communication.
+
+### Adapter Architecture
+
+```text
+Resolution at runtime:
+  TVConnectionManager
+          |
+          v
+  ITVAdapterFactory -> TVAdapterFactory
+                            |
+                            +-- resolves/creates -> LGWebOSAdapter
+                            +-- future registration -> FutureAdapter
+                                                       (planned)
+
+Shared contract:
+  LGWebOSAdapter ---- implements ----> ITVRemoteAdapter
+  FutureAdapter -- would implement --> ITVRemoteAdapter
+
+Application code uses ITVRemoteAdapter for TV operations.
 ```
 
-### iOS
+### Adapter Pattern
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+`LGWebOSAdapter` translates application-level remote commands into LG webOS-specific communication.
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+This allows the application to execute shared operations without requiring the presentation layer to understand SSAP messages or WebSocket details.
 
-```sh
-bundle install
+### Factory Pattern and Dependency Injection
+
+`TVAdapterFactory` uses registrations that match both device protocol and TV platform, then creates the concrete adapter. Unmatched devices are rejected rather than inferred from brand alone.
+
+**Dependency Injection** in `src/di/container.ts` supplies implementations of contracts such as `ITVAdapterFactory`, `ITVDeviceRepository`, and `ICredentialStorage` to services and use cases.
+
+Together, these patterns improve modularity, maintainability, and extensibility.
+
+### Extending Support to Other Manufacturers
+
+Future support for another television manufacturer would involve implementing a dedicated adapter for its supported control protocol.
+
+The integration would include device discovery, authentication, command mapping, connection handling, and capability detection.
+
+The shared application logic and React Native interface could continue using the existing abstractions wherever the manufacturer supports equivalent operations.
+
+**Currently supported:** Compatible LG webOS televisions. Additional manufacturers are future extension targets.
+
+---
+
+## 3. LG webOS Communication & Native Networking
+
+SmartRemote communicates with compatible LG webOS televisions using **SSAP (Simple Service Access Protocol)** over WebSocket connections.
+
+While connection management and protocol-level operations are coordinated through TypeScript, the application integrates native networking implementations for secure WebSocket communication on both iOS and Android.
+
+This approach combines the flexibility of React Native with platform-specific control over TLS certificate validation and network transport behavior.
+
+### Connection Architecture
+
+```text
+Runtime connection path
+
+  React Native UI -> ConnectTVUseCase -> TVConnectionManager
+                                              |
+                                              v
+                                       LGWebOSAdapter
+                                  pairing / SSAP requests
+                                              |
+                                              v
+                                  LGWebOSWebSocketClient
+                                              |
+                                              v
+                                    IWebSocketTransport
+                                              |
+                         +--------------------+--------------------+
+                         |                                        |
+                         v                                        v
+                 iOS native module                    Android native module
+              NSURLSessionWebSocketTask                   Kotlin / OkHttp
+              Objective-C trust policy                   TLS trust policy
+                         |                                        |
+                         +--------------------+--------------------+
+                                              |
+                                              v
+                                         LG webOS TV
 ```
 
-Then, and every time you update your native dependencies, run:
+The diagram shows the native WSS path. Android enforces WSS-only LG connections; the current iOS endpoint list also retains a legacy plaintext WebSocket fallback, so encryption is not guaranteed for every iOS connection.
 
-```sh
-bundle exec pod install
+### Native WebSocket Implementation
+
+React Native provides a WebSocket API; however, LG webOS communication introduces additional requirements related to certificate validation, trusted device identity, and secure connection management.
+
+SmartRemote addresses these requirements through native networking integrations.
+
+**Android — Kotlin & OkHttp**
+
+The Android implementation uses a Kotlin-based native module with OkHttp for WebSocket communication. It manages secure connections, TLS certificate validation, and native connection events, which are exposed to the React Native layer.
+
+**iOS — Objective-C & Native Networking**
+
+The iOS native module uses `NSURLSessionWebSocketTask` with Objective-C networking and security components. On WSS connections, both platforms validate the TV certificate against a bundled LG intermediate CA and check the expected TV certificate identity. TypeScript compares available leaf fingerprints with securely stored device trust records, rejecting certificate changes.
+
+The platform-specific implementations are abstracted behind a shared TypeScript transport interface, allowing the application layer to coordinate communication without depending directly on native networking APIs.
+
+### SSAP Protocol & Pairing
+
+The LG adapter manages the application-level communication required to interact with webOS televisions.
+
+The connection workflow includes:
+
+```text
+  SSDP discovery (where supported) / Manual IP
+                       |
+                       v
+         Open WebSocket transport
+         WSS: native TLS certificate validation
+                       |
+                       v
+         Check available certificate fingerprint
+                       |
+                       v
+         SSAP registration / TV pairing
+                       |
+                       v
+         Initialize services and capabilities
+                       |
+                       v
+         Dispatch SSAP remote commands
+         Pointer input uses a separate socket
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+SSAP command formatting, television pairing coordination, and supported operation handling are implemented within the TypeScript infrastructure layer.
 
-```sh
-# Using npm
-npm run ios
+Native modules provide the underlying secure transport, while shared application services manage the overall connection lifecycle.
 
-# OR using Yarn
-yarn ios
+Pairing keys and certificate fingerprints use `SecureCredentialStorage`, backed by React Native Keychain. Device metadata and remote preferences use AsyncStorage. SSDP discovery uses UDP where available; the current iOS transport disables multicast discovery because it requires a restricted Apple entitlement, so iOS uses manual IP connection.
+
+### Connection Lifecycle & Recovery
+
+The `TVConnectionManager` manages the active television session independently of presentation components.
+
+Its responsibilities include connection restoration, foreground/background lifecycle handling, connection health monitoring, controlled reconnection, and error recovery.
+
+This separation ensures that screens and remote-control components do not directly manage WebSocket sessions or manufacturer-specific networking behavior.
+
+The result is a **cross-platform communication architecture with shared protocol logic and platform-specific secure transport implementations**.
+
+---
+
+## 4. Native Motion and Hybrid Pointer
+
+SmartRemote integrates native motion sensor APIs to support motion-based television pointer control.
+
+While the application interface is developed with React Native, motion sensing relies on native operating system functionality.
+
+### Native Motion Architecture
+
+```text
+  iOS: Swift / CoreMotion       Android: Kotlin / SensorManager
+              |                              |
+              +---------------+--------------+
+                              |
+                              v
+                 React Native module events
+                              |
+                              v
+                   IMotionSensorService
+                              |
+                              v
+                 MotionPointerController
+                 filtering / calibration
+                              |
+                              v
+                 useMotionPointer callback
+                 gated by useHybridPointer
+                              |
+                              v
+                 SendRemoteCommandUseCase
+                              |
+                              v
+           TVConnectionManager -> LGWebOSAdapter
+                              |
+                              v
+                   LG TV pointer socket
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+### iOS Implementation
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+The iOS implementation uses **Swift and CoreMotion** to obtain device motion data.
 
-## Step 3: Modify your app
+These measurements are provided to the shared application logic and processed into television pointer movements.
 
-Now that you have successfully run the app, let's make changes!
+### Android Implementation
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+The Android implementation uses **Kotlin and SensorManager** to collect motion sensor information.
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+Native sensor functionality is exposed through a React Native integration, allowing the application to share pointer-control behavior across platforms.
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+### Hybrid Pointer
 
-## Congratulations! :tada:
+SmartRemote combines motion-based input and touchpad gestures in a unified Pointer interface.
 
-You've successfully run and modified your React Native App. :partying_face:
+The user can move the television cursor by physically moving the phone or interacting with the touchpad.
 
-### Now what?
+An input coordination mechanism prevents Motion and Touchpad from simultaneously producing conflicting pointer movements.
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+Motion activity is also managed according to screen navigation, connection state, and foreground/background transitions.
 
-# Troubleshooting
+When motion sensors are unavailable, the Pointer interface retains touchpad input.
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+---
 
-# Learn More
+## 5. Platform-Adaptive UI Design
 
-To learn more about React Native, take a look at the following resources:
+SmartRemote uses a shared React Native UI while applying platform-specific layout and interaction rules for iOS and Android.
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+Shared theme and layout tokens in `src/presentation/theme` define colors, spacing, content widths, and minimum touch targets. Reusable controls include `DirectionPad`, `VolumeRocker`, `ChannelRocker`, `PointerSurface`, and `NumericKeypad`.
+
+| Design Concern | Implementation |
+|---|---|
+| Safe areas and cutouts | Safe Area Context supplies top and side insets; navigation owns header and tab regions. |
+| Android navigation insets | The tab bar includes the bottom system inset once, avoiding duplicate bottom spacing. |
+| Screen density and control sizing | React Native density-independent dimensions combine with window width, available height, and font scale; Android uses denser surfaces while retaining minimum touch targets. |
+| Adaptive layout | Width budgets determine when forms, details, and controls stack; content widths are capped on larger displays. |
+| Keyboard and scrolling | Settings forms use automatic keyboard insets on iOS; scroll dismissal is interactive on iOS and on-drag on Android, with handled taps for form controls. |
+
+This keeps a shared visual language while accommodating platform layout and interaction differences.
+
+---
+
+## 6. Application Features
+
+SmartRemote currently includes:
+
+- LG webOS remote navigation and media controls
+- Volume and channel management
+- Direct numeric channel selection
+- Secure TV pairing and session management
+- Touchpad and motion-based pointer control
+- Automatic reconnection and connection restoration
+- Saved television management
+- SSDP discovery where supported and manual IP connection
+- Wake-on-LAN for compatible television configurations
+- Connection diagnostics and recovery guidance
+- Remote preferences and developer diagnostics
+
+Automated tests cover selected application, communication, UI, and native behavior. Simulator captures validate UI presentation; physical-device checks for pairing, recovery, motion, and standby wake remain necessary, as recorded in the linked validation reports.
+
+---
+
+## 7. Future Development
+
+SmartRemote is designed with extensibility and continued improvement in mind.
+
+**Multi-Brand Integration:** Extend television compatibility by implementing additional manufacturer-specific adapters through the existing architecture.
+
+**Connection Infrastructure:** Improve device rediscovery, network transition handling, diagnostic accuracy, and reconnection reliability.
+
+**Motion Infrastructure:** Further optimize sensor calibration, movement filtering, sensitivity, and pointer stabilization across iOS and Android.
+
+**Platform Experience:** Expand discovery capabilities, improve accessibility, and refine responsive interface behavior across different devices.
+
+---
+
+## Conclusion
+
+SmartRemote brings together **cross-platform mobile development, native iOS and Android integrations, secure local network communication, and modular software architecture**.
+
+Its layered architecture, adapters, factory registrations, and dependency injection separate shared application behavior from manufacturer-specific communication.
+
+By combining React Native with Swift, Objective-C, Kotlin, WebSocket communication, and native motion sensors, SmartRemote provides a practical foundation for developing a maintainable and extensible Smart TV remote control application.
+
+---
+
+*SmartRemote is an independent software development project and is not affiliated with or endorsed by LG Electronics.*
