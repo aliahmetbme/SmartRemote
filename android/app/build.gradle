@@ -7,6 +7,8 @@ apply plugin: "com.facebook.react"
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
+    // Release must always bundle the normal application, never screenshot fixtures.
+    entryFile = file("../../index.js")
     /* Folders */
     //   The root of your project, i.e. where "package.json" lives. Default is '../..'
     // root = file("../../")
@@ -72,6 +74,48 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+// Private user-local configuration; never provide credentials in tracked files or CLI flags.
+def releaseSigningFile = new File(System.getProperty('user.home'), '.config/SmartRemote/signing/signing.properties')
+def releaseSigning = new Properties()
+if (releaseSigningFile.isFile()) {
+    releaseSigningFile.withInputStream { releaseSigning.load(it) }
+}
+
+def validateReleaseCredentials = tasks.register('validateReleaseSigningCredentials') {
+    doLast {
+        if (System.getenv('SMARTREMOTE_SCREENSHOTS') == '1') {
+            throw new GradleException('Screenshot mode must be disabled for Release builds.')
+        }
+        if (!['storeFile', 'storeType', 'storePassword', 'keyAlias', 'keyPassword'].every { releaseSigning.getProperty(it)?.trim() }) {
+            throw new GradleException('Release signing is not configured. Run python3 scripts/setup-android-release-signing.py from the project root in a private terminal. Debug signing is never used for Release.')
+        }
+        def keyFile = new File(releaseSigning.getProperty('storeFile')).canonicalFile
+        if (keyFile.toPath().startsWith(rootProject.projectDir.parentFile.canonicalFile.toPath())) {
+            throw new GradleException('The release keystore must be stored outside the repository.')
+        }
+        try {
+            def store = java.security.KeyStore.getInstance(releaseSigning.getProperty('storeType'))
+            keyFile.withInputStream { store.load(it, releaseSigning.getProperty('storePassword').toCharArray()) }
+            def alias = releaseSigning.getProperty('keyAlias')
+            def key = store.getKey(alias, releaseSigning.getProperty('keyPassword').toCharArray())
+            def cert = store.getCertificate(alias)
+            if (!(key instanceof java.security.PrivateKey) || cert == null ||
+                cert.subjectX500Principal.name.toLowerCase().contains('cn=android debug')) {
+                throw new IllegalStateException()
+            }
+            cert.checkValidity()
+        } catch (Exception ignored) {
+            throw new GradleException('Release signing identity validation failed. Check the private keystore, alias, passwords and certificate validity locally.')
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name in ['validateSigningRelease', 'packageRelease', 'signReleaseBundle']) {
+        dependsOn(validateReleaseCredentials)
+    }
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -86,6 +130,15 @@ android {
         versionName "1.0"
     }
     signingConfigs {
+        release {
+            if (releaseSigning.getProperty('storeFile')) {
+                storeFile new File(releaseSigning.getProperty('storeFile'))
+            }
+            storeType releaseSigning.getProperty('storeType', 'PKCS12')
+            storePassword releaseSigning.getProperty('storePassword')
+            keyAlias releaseSigning.getProperty('keyAlias')
+            keyPassword releaseSigning.getProperty('keyPassword')
+        }
         debug {
             storeFile file('debug.keystore')
             storePassword 'android'
@@ -98,9 +151,7 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }

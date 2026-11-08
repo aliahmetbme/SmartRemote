@@ -16,6 +16,28 @@ const testMetrics = {
 };
 
 describe('AppNavigator Component', () => {
+  it('does not expose Developer Settings in Release', async () => {
+    const development = jest.replaceProperty(globalThis as unknown as { __DEV__: boolean }, '__DEV__', false);
+    const container = createContainer();
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    try {
+      await ReactTestRenderer.act(async () => {
+        tree = ReactTestRenderer.create(
+          <SafeAreaProvider initialMetrics={testMetrics}><Provider store={container.store}><ContainerProvider container={container}>
+            <AppNavigator initialState={{ index: 2, routes: [{ name: 'Remote' }, { name: 'Discovery' }, { name: 'Settings' }] }} />
+          </ContainerProvider></Provider></SafeAreaProvider>,
+        );
+      });
+      expect(tree.root.findAllByProps({ testID: 'developer-settings-toggle' })).toHaveLength(0);
+      expect(tree.root.findAllByProps({ testID: 'developer-settings-screen' })).toHaveLength(0);
+      expect(tree.root.findAllByType(DeveloperSettingsScreen)).toHaveLength(0);
+    } finally {
+      if (tree) await ReactTestRenderer.act(async () => { tree.unmount(); });
+      container.disposeDiagnostics();
+      container.remotePreferences.dispose();
+      development.restore();
+    }
+  });
   it('renders all three navigation tabs and boots on Remote screen', async () => {
     const mockAdapter = new MockTVAdapter();
     const container = createContainer({

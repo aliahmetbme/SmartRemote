@@ -7,7 +7,6 @@ import {
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TVWakeSetupScreen } from '../screens/TVWakeSetupScreen';
-import { DeveloperSettingsScreen } from '../screens/DeveloperSettingsScreen';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text, View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +14,10 @@ import { RemoteScreen } from '../screens/RemoteScreen';
 import { TVDiscoveryScreen } from '../screens/TVDiscoveryScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { theme, getTabBarLayout } from '../theme';
+
+const DeveloperSettingsScreen = __DEV__
+  ? require('../screens/DeveloperSettingsScreen').DeveloperSettingsScreen
+  : undefined;
 
 export type RootTabParamList = {
   Remote: { initialMode?: 'buttons' | 'pointer' } | undefined;
@@ -122,7 +125,7 @@ const SettingsHome = ({
   };
 }) => (
   <SettingsScreen
-    onNavigateToDeveloper={() => navigation.navigate('DeveloperSettings')}
+    onNavigateToDeveloper={__DEV__ ? () => navigation.navigate('DeveloperSettings') : undefined}
     onNavigateToWakeSetup={deviceId =>
       navigation.navigate('TVWakeSetup', { deviceId })
     }
@@ -151,11 +154,11 @@ const SettingsNavigator = () => (
       component={SettingsHome}
       options={{ title: 'Settings', headerShown: false }}
     />
-    <SettingsStack.Screen
+    {__DEV__ && <SettingsStack.Screen
       name="DeveloperSettings"
       component={DeveloperSettingsScreen}
       options={{ title: 'Developer Settings' }}
-    />
+    />}
     <SettingsStack.Screen
       name="TVWakeSetup"
       component={WakeSetupRoute}

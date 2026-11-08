@@ -6,7 +6,6 @@ import { TVUnsupportedOperationError } from '../../domain/errors/TVUnsupportedOp
 import { ITVAdapterFactory } from '../../domain/interfaces/ITVAdapterFactory';
 import { ITVRemoteAdapter } from '../../domain/interfaces/ITVRemoteAdapter';
 import { LGWebOSAdapter, LGWebOSAdapterDependencies } from '../adapters/lg-webos/LGWebOSAdapter';
-import { MockTVAdapter } from '../adapters/mock/MockTVAdapter';
 
 export interface AdapterRegistration {
   /** Unique name, used for diagnostics and to prevent double registration. */
@@ -48,12 +47,6 @@ export class TVAdapterFactory implements ITVAdapterFactory {
   }
 }
 
-export const mockAdapterRegistration: AdapterRegistration = {
-  id: 'mock',
-  supports: d => d.protocol === TVProtocol.Mock && d.platform === TVPlatform.Mock,
-  create: () => new MockTVAdapter(),
-};
-
 export function createLGWebOSRegistration(deps: LGWebOSAdapterDependencies): AdapterRegistration {
   return {
     id: 'lg-webos',
@@ -76,7 +69,15 @@ export interface DefaultAdapterFactoryOptions {
 export function createDefaultAdapterFactory(
   options: DefaultAdapterFactoryOptions = {},
 ): TVAdapterFactory {
-  const factory = new TVAdapterFactory().register(mockAdapterRegistration);
+  const factory = new TVAdapterFactory();
+  if (__DEV__) {
+    const { MockTVAdapter } = require('../adapters/mock/MockTVAdapter');
+    factory.register({
+      id: 'mock',
+      supports: d => d.protocol === TVProtocol.Mock && d.platform === TVPlatform.Mock,
+      create: () => new MockTVAdapter(),
+    });
+  }
   if (options.lgWebOS) {
     factory.register(createLGWebOSRegistration(options.lgWebOS));
   }

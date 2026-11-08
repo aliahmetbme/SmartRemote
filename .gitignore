@@ -31,6 +31,10 @@ local.properties
 *.hprof
 .cxx/
 *.keystore
+*.jks
+*.p12
+*.pfx
+**/signing.properties
 !debug.keystore
 .kotlin/
 

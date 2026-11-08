@@ -9,6 +9,19 @@ import {
 import { makeMockDevice, makeWebOSDevice } from '../../testing/fixtures';
 
 describe('TVAdapterFactory', () => {
+  it('rejects mock devices in Release even when LG dependencies are provided', () => {
+    const development = jest.replaceProperty(globalThis as unknown as { __DEV__: boolean }, '__DEV__', false);
+    try {
+      const factory = createDefaultAdapterFactory({
+        lgWebOS: { credentialStorage: { get: jest.fn(), set: jest.fn(), remove: jest.fn() } },
+      });
+      expect(factory.supports(makeMockDevice())).toBe(false);
+      expect(() => factory.create(makeMockDevice())).toThrow(TVUnsupportedOperationError);
+      expect(factory.supports(makeWebOSDevice())).toBe(true);
+    } finally {
+      development.restore();
+    }
+  });
   it('selects the mock adapter for mock devices', () => {
     const factory = createDefaultAdapterFactory();
     expect(factory.create(makeMockDevice())).toBeInstanceOf(MockTVAdapter);
