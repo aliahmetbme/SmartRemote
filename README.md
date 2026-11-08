@@ -12,13 +12,9 @@ Although the current implementation focuses on LG webOS, the software architectu
 
 ## Application Preview
 
-<p align="center">
-  <img src="docs/screenshots/ios/ios-remote.png" width="220" alt="SmartRemote remote control screen" />
-  <img src="docs/screenshots/ios/ios-pointer.png" width="220" alt="SmartRemote Hybrid Pointer screen with touchpad fallback" />
-  <img src="docs/screenshots/ios/ios-settings.png" width="220" alt="SmartRemote Settings screen with TV Wake Setup entry" />
-</p>
+![SmartRemote — Cross-Platform TV Remote Application](docs/images/smartremote-showcase.jpg)
 
-These iOS simulator captures use development-only demo TVs; Connected status does not demonstrate a physical TV connection. The Pointer capture shows the touchpad fallback with motion unavailable. Android and connection recovery captures are linked in the [screenshot report](docs/PHASE_15_UI_POLISH_AND_SCREENSHOTS.md); the updated Settings and TV Wake Setup captures are documented in the [TV Wake Setup report](docs/PHASE_15_1_TV_WAKE_SETUP.md).
+This showcase is a visual representation of SmartRemote. Demo TV Connected status does not demonstrate a physical TV connection, physical-device testing, app store availability, or support beyond compatible LG webOS televisions. Android and connection recovery captures are documented in the [screenshot report](docs/PHASE_15_UI_POLISH_AND_SCREENSHOTS.md); Settings and TV Wake Setup captures are documented in the [TV Wake Setup report](docs/PHASE_15_1_TV_WAKE_SETUP.md).
 
 ---
 
